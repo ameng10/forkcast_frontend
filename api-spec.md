@@ -1,122 +1,1208 @@
-Updated API endpoints (from backend scan) and minimal payload examples:
+# API Specification: PersonalQA Concept
+
+**Purpose:** Manage and query personal facts for a user to provide answers to questions.
 
 ---
 
-# PersonalQA
-Base: /api/PersonalQA
+## API Endpoints
 
-- POST /api/PersonalQA/ingestFact
-  - Body: { "user": "{ID}", "fact": { ... } } | for answers: { "user": "{ID}", "question": "{ID}", "answer": "string" }
-  - Resp: {}
-- POST /api/PersonalQA/forgetFact
-  - Body: { "user": "{ID}", "factId": "{ID}" }
-  - Resp: {}
-- POST /api/PersonalQA/ask
-  - Body: { "user": "{ID}", "text": "string" }
-  - Resp: { "question": "{ID}" }
-- POST /api/PersonalQA/_getUserFacts
-  - Body: { "user": "{ID}" }
-  - Resp: [ { "fact": { ... } } ]
-- POST /api/PersonalQA/_getUserQAs
-  - Body: { "user": "{ID}" }
-  - Resp: [ { "question": { "text": "string", "timestamp": "string", "answer": "string|null", "answerTimestamp": "string|null" } } ]
+### POST /api/PersonalQA/ingestFact
 
----
+**Description:** Allows a user to store a new piece of information or fact into their personal knowledge base.
 
-# InsightMining
-Base: /api/InsightMining
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- The `fact` string must not be empty.
 
-- POST /api/InsightMining/ingest
-  - Body: { "user": "{ID}", "mealLog": "{ID}" }
-  - Resp: {}
-- POST /api/InsightMining/analyze
-  - Body: { "user": "{ID}" }
-  - Resp: {}
-- POST /api/InsightMining/summarize
-  - Body: { "user": "{ID}" }
-  - Resp: { "summary": "string" }
-- POST /api/InsightMining/deactivate
-  - Body: { "user": "{ID}", "insightId": "{ID}" }
-  - Resp: {}
-- POST /api/InsightMining/_getObservationsForUser
-  - Body: { "user": "{ID}" }
-  - Resp: [ { "observation": { ... } } ]
-- POST /api/InsightMining/_getInsightsForUser
-  - Body: { "user": "{ID}" }
-  - Resp: [ { "insight": { "type": "string", "description": "string", "suggestedAdjustment": "string" } } ]
-- POST /api/InsightMining/_getReport
-  - Body: { "user": "{ID}" }
-  - Resp: { "report": { ... } }
+**Effects:**
+- A new fact is stored and associated with the `owner`.
+- A unique identifier (`factId`) for the new fact is generated and returned.
+
+**Request Body:**
+```json
+{
+  "owner": "ID",
+  "fact": "String"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "factId": "ID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
 
 ---
 
-# QuickCheckIns
-Base: /api/QuickCheckIns
+### POST /api/PersonalQA/forgetFact
 
-- POST /api/QuickCheckIns/record
-  - Body: { "owner": "{ID}", "mood": "string", "energyLevel": "number", "notes": "string" }
-  - Resp: { "checkIn": "{ID}" }
-- POST /api/QuickCheckIns/defineMetric
-  - Body: { "owner": "{ID}", "name": "string", "type": "string" }
-  - Resp: {}
-- POST /api/QuickCheckIns/edit
-  - Body: { "checkIn": "{ID}", ... }
-  - Resp: {}
-- POST /api/QuickCheckIns/_getCheckIn
-  - Body: { "checkIn": "{ID}" }
-  - Resp: { "checkIn": { ... } }
-- POST /api/QuickCheckIns/_getMetricsByName
-  - Body: { "owner": "{ID}", "name": "string" }
-  - Resp: [ { "metric": { ... } } ]
-- POST /api/QuickCheckIns/_listCheckInsByOwner
-  - Body: { "owner": "{ID}", "startDate": "string", "endDate": "string" }
-  - Resp: [ { "checkIn": { "timestamp": "string", "mood": "string", "energyLevel": "number", "notes": "string" } } ]
+**Description:** Removes a previously stored fact associated with a specific user.
 
----
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- The `factId` must correspond to an existing fact that is owned by the `owner`.
 
-# LikertSurvey
-Base: /api/LikertSurvey
+**Effects:**
+- The fact identified by `factId` is removed from the `owner`'s collection of facts.
 
-- POST /api/LikertSurvey/createSurvey
-- POST /api/LikertSurvey/addQuestion
-- POST /api/LikertSurvey/submitResponse
-- POST /api/LikertSurvey/updateResponse
-- POST /api/LikertSurvey/_getSurveyQuestions
-- POST /api/LikertSurvey/_getSurveyResponses
-- POST /api/LikertSurvey/_getRespondentAnswers
+**Request Body:**
+```json
+{
+  "owner": "ID",
+  "factId": "ID"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
 
 ---
 
-# MealLog
-Base: /api/MealLog
+### POST /api/PersonalQA/ask
 
-- POST /api/MealLog/connect
-  - Body: { "owner": "{ID}" }
-  - Resp: {}
-- POST /api/MealLog/disconnect
-  - Body: { "owner": "{ID}" }
-  - Resp: {}
-- POST /api/MealLog/getCollection
-  - Body: { "owner": "{ID}" }
-  - Resp: [ { ... } ]
-- POST /api/MealLog/_getMealDocumentById
-  - Body: { "mealId": "{ID}" }
-  - Resp: { ... }
-- POST /api/MealLog/_getMealObjectById
-  - Body: { "mealId": "{ID}" }
-  - Resp: { ... }
-- POST /api/MealLog/submit
-  - Body: { "owner": "{ID}", "date": "string", "mealType": "string", "foodItems": [ { "name": "string", "calories": "number", "macronutrients": { "carbs": "number", "protein": "number", "fat": "number" } } ] }
-  - Resp: { "mealId": "{ID}" }
-- POST /api/MealLog/edit
-  - Body: { "mealId": "{ID}", ... }
-  - Resp: {}
-- POST /api/MealLog/delete
-  - Body: { "mealId": "{ID}" }
-  - Resp: {}
-- POST /api/MealLog/getMealsForOwner
-  - Body: { "owner": "{ID}", "startDate": "string", "endDate": "string" }
-  - Resp: [ { "mealLog": { "id": "{ID}", "date": "string", "mealType": "string", "foodItems": [ ... ] } } ]
-- POST /api/MealLog/getMealById
-  - Body: { "mealId": "{ID}" }
-  - Resp: { "mealLog": { ... } }
+**Description:** Asks a question and receives an answer based on the user's previously ingested facts.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- The `question` string must not be empty.
+
+**Effects:**
+- An `answer` string is generated by the system, drawing information from the facts ingested by the `owner`, and returned.
+
+**Request Body:**
+```json
+{
+  "requester": "user:Alice",
+  "question": "What meals helped energy?"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "answer": "String"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/PersonalQA/_getUserFacts
+
+**Description:** Retrieves all facts previously ingested by a specific user.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+
+**Effects:**
+- Returns a list of all facts associated with the `owner`, each with its unique identifier and content.
+
+**Request Body:**
+```json
+{
+  "owner": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "factId": "ID",
+    "fact": "String"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/PersonalQA/_getUserQAs
+
+**Description:** Retrieves a history of questions asked and their corresponding answers for a specific user.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+
+**Effects:**
+- Returns a list of question-answer pairs that have been previously processed for the `owner`.
+
+**Request Body:**
+```json
+{
+  "owner": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "question": "String",
+    "answer": "String"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+# API Specification: InsightMining Concept
+
+**Purpose:** Support the collection, analysis, and summarization of user observations to generate insights and reports.
+
+---
+
+## API Endpoints
+
+### POST /api/InsightMining/ingest
+
+**Description:** Ingests a new observation from a user for later analysis.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- The `observation` string must not be empty.
+
+**Effects:**
+- A new observation is stored and associated with the `owner`.
+- A unique identifier (`observationId`) for the new observation is generated and returned.
+
+**Request Body:**
+```json
+{
+  "owner": "ID",
+  "observation": "String"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "observationId": "ID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/InsightMining/analyze
+
+**Description:** Processes a user's observations to generate new insights.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- There must be at least one observation associated with the `owner`.
+
+**Effects:**
+- The system analyzes the `owner`'s observations.
+- New insights, if generated, are stored and associated with the `owner`.
+- Returns a list of unique identifiers (`insightIds`) for any newly generated insights.
+
+**Request Body:**
+```json
+{
+  "owner": "ID"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "insightIds": ["ID"]
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/InsightMining/summarize
+
+**Description:** Generates a summary report based on a user's observations and insights.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- There must be at least one observation or insight associated with the `owner`.
+
+**Effects:**
+- A summary `report` string is generated based on the `owner`'s observations and insights.
+- The generated `report` string is returned.
+
+**Request Body:**
+```json
+{
+  "owner": "ID"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "report": "String"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/InsightMining/deactivate
+
+**Description:** Deactivates the insight mining process for a user, potentially archiving or stopping further analysis.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- The user's insight mining status must be active.
+
+**Effects:**
+- The insight mining functionality for the `owner` is deactivated.
+- This might prevent future `ingest`, `analyze`, or `summarize` actions until reactivated.
+
+**Request Body:**
+```json
+{
+  "requester": "user:Alice",
+  "owner": "user:Alice",
+  "signals": ["fried"],
+  "metric": "energy"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/InsightMining/_getObservationsForUser
+
+**Description:** Retrieves all observations previously ingested by a specific user.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+
+**Effects:**
+- Returns a list of all observations associated with the `owner`, each with its unique identifier and content.
+
+**Request Body:**
+```json
+{
+  "owner": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "observationId": "ID",
+    "observation": "String"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/InsightMining/_getInsightsForUser
+
+**Description:** Retrieves all insights generated for a specific user.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+
+**Effects:**
+- Returns a list of all insights generated and associated with the `owner`, each with its unique identifier and content.
+
+**Request Body:**
+```json
+{
+  "owner": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "insightId": "ID",
+    "insight": "String"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/InsightMining/_getReport
+
+**Description:** Retrieves the latest generated report for a specific user.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- A report must have been generated for the `owner`.
+
+**Effects:**
+- Returns the most recent summary `report` string generated for the `owner`.
+
+**Request Body:**
+```json
+{
+  "owner": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "report": "String"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+# API Specification: QuickCheckIns Concept
+
+**Purpose:** Enable users to define and record measurements for custom metrics, and retrieve their check-in data.
+
+---
+
+## API Endpoints
+
+### POST /api/QuickCheckIns/record
+
+**Description:** Records a new check-in value for a specific metric owned by a user.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- The `metricName` must correspond to a metric previously defined by the `owner`.
+- The `value` must be a valid number.
+- `timestamp` is optional, if not provided, current time will be used.
+
+**Effects:**
+- A new check-in record is created, associating the `owner`, `metricName`, `value`, and `timestamp`.
+- A unique identifier (`checkInId`) for the new check-in is generated and returned.
+
+**Request Body:**
+```json
+{
+  "owner": "ID",
+  "metricName": "String",
+  "value": "Number",
+  "timestamp": "Number"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "checkInId": "ID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/QuickCheckIns/defineMetric
+
+**Description:** Defines a new custom metric that a user can record check-ins against.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- A metric with the given `name` must not already exist for this `owner`.
+- The `unit` string must not be empty.
+
+**Effects:**
+- A new metric is defined for the `owner` with the specified `name` and `unit`.
+- A unique identifier (`metricId`) for the new metric is generated and returned.
+
+**Request Body:**
+```json
+{
+  "owner": "ID",
+  "name": "String",
+  "unit": "String"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "metricId": "ID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/QuickCheckIns/edit
+
+**Description:** Modifies an existing check-in record for a specific user.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- The `checkInId` must correspond to an existing check-in owned by `owner`.
+- `newValue` must be a valid number. `newTimestamp` is optional.
+
+**Effects:**
+- The check-in identified by `checkInId` has its `value` updated to `newValue`.
+- If `newTimestamp` is provided, the check-in's timestamp is updated.
+
+**Request Body:**
+```json
+{
+  "owner": "ID",
+  "checkInId": "ID",
+  "newValue": "Number",
+  "newTimestamp": "Number"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/QuickCheckIns/_getCheckIn
+
+**Description:** Retrieves a specific check-in record by its unique identifier.
+
+**Requirements:**
+- The `checkInId` must correspond to an existing check-in.
+
+**Effects:**
+- Returns the check-in record including its `owner`, `metricName`, `value`, and `timestamp`.
+
+**Request Body:**
+```json
+{
+  "checkInId": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "checkInId": "ID",
+    "owner": "ID",
+    "metricName": "String",
+    "value": "Number",
+    "timestamp": "Number"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/QuickCheckIns/_getMetricsByName
+
+**Description:** Retrieves all metrics defined by a user matching a given name.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- The `name` string must not be empty.
+
+**Effects:**
+- Returns a list of metrics defined by `owner` that have the specified `name`, including their ID and unit.
+
+**Request Body:**
+```json
+{
+  "owner": "ID",
+  "name": "String"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "metricId": "ID",
+    "name": "String",
+    "unit": "String"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/QuickCheckIns/_listCheckInsByOwner
+
+**Description:** Retrieves all check-in records for a specific user, optionally filtered by metric name and time range.
+
+**Requirements:**
+- The `owner` (User ID) must correspond to an existing user.
+- `metricName` (optional) must correspond to a metric defined by the `owner` if provided.
+- `startDate` and `endDate` (optional) must be valid timestamps if provided.
+
+**Effects:**
+- Returns a list of all check-in records for the `owner`, filtered by the provided optional parameters.
+
+**Request Body:**
+```json
+{
+  "owner": "ID",
+  "metricName": "String",
+  "startDate": "Number",
+  "endDate": "Number"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "checkInId": "ID",
+    "metricName": "String",
+    "value": "Number",
+    "timestamp": "Number"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+# API Specification: MealLog Concept
+
+**Purpose:** Support the submission, editing, deletion, and retrieval of user-logged meal information, allowing for collection-based organization.
+
+---
+
+## API Endpoints
+
+### POST /api/MealLog/connect
+
+**Description:** Connects a meal to a specific collection.
+
+**Requirements:**
+- `mealId` must correspond to an existing meal.
+- `collectionId` must correspond to an existing collection.
+- The meal must not already be part of the collection.
+
+**Effects:**
+- The meal identified by `mealId` is associated with the collection identified by `collectionId`.
+
+**Request Body:**
+```json
+{}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/disconnect
+
+**Description:** Disconnects a meal from a specific collection.
+
+**Requirements:**
+- `mealId` must correspond to an existing meal.
+- `collectionId` must correspond to an existing collection.
+- The meal must currently be part of the collection.
+
+**Effects:**
+- The meal identified by `mealId` is dissociated from the collection identified by `collectionId`.
+
+**Request Body:**
+```json
+{
+  "mealId": "ID",
+  "collectionId": "ID"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/getCollection
+
+**Description:** Retrieves a collection of meal documents. (Note: This action name suggests a query, but it's listed as an action. Assuming it creates/retrieves with side-effects or returns a transient collection object).
+
+**Requirements:**
+- `collectionId` must correspond to an existing collection.
+
+**Effects:**
+- Returns the details of the collection identified by `collectionId`, including its name and the list of associated meal IDs.
+
+**Request Body:**
+```json
+{}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "name": "String",
+  "mealIds": ["ID"]
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/_getMealDocumentById
+
+**Description:** Retrieves a raw meal document by its unique identifier.
+
+**Requirements:**
+- `mealDocumentId` must correspond to an existing meal document.
+
+**Effects:**
+- Returns the complete meal document associated with `mealDocumentId`. (Assuming a JSON object structure for the document).
+
+**Request Body:**
+```json
+{
+  "mealDocumentId": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "document": {
+      "anyKey": "anyValue"
+    }
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/_getMealObjectById
+
+**Description:** Retrieves a structured meal object by its unique identifier.
+
+**Requirements:**
+- `mealObjectId` must correspond to an existing meal object.
+
+**Effects:**
+- Returns the structured meal object associated with `mealObjectId`. (Assuming a specific structured format like {owner, date, items, totalCalories}).
+
+**Request Body:**
+```json
+{
+  "mealObjectId": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "owner": "ID",
+    "date": "Number",
+    "items": ["String"],
+    "totalCalories": "Number"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/submit
+
+**Description:** Submits a new meal log entry, creating a meal document and object.
+
+**Requirements:**
+- `owner` must correspond to an existing user.
+- `mealData` (a document object) must be provided.
+
+**Effects:**
+- A new meal document is stored.
+- A new structured meal object is created and associated with the `owner` and the document.
+- Returns the unique identifier (`mealId`) of the new meal.
+
+**Request Body:**
+```json
+{
+  "ownerId": "user:Alice",
+  "at": "2025-10-21T10:00:00.000Z",
+  "items": [{ "id": "food:apple", "name": "Apple" }],
+  "notes": "snack"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "mealId": "ID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/edit
+
+**Description:** Edits an existing meal log entry's details.
+
+**Requirements:**
+- `mealId` must correspond to an existing meal owned by `owner`.
+- `newMealData` (a document object) must be provided.
+
+**Effects:**
+- The meal document associated with `mealId` is updated with `newMealData`.
+- The structured meal object associated with `mealId` is updated based on `newMealData`.
+
+**Request Body:**
+```json
+{
+  "callerId": "user:Alice",
+  "mealId": "<meal-id>",
+  "items": [{...}],
+  "notes": "..."
+}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/delete
+
+**Description:** Deletes a meal log entry and its associated document and object.
+
+**Requirements:**
+- `mealId` must correspond to an existing meal owned by `owner`.
+
+**Effects:**
+- The meal document and structured meal object identified by `mealId` are permanently removed.
+- Any connections to collections are also removed.
+
+**Request Body:**
+```json
+{
+  "callerId": "user:Alice",
+  "mealId": "<meal-id>"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/getMealsForOwner
+
+**Description:** Retrieves all meal IDs for a specific owner within an optional date range.
+
+**Requirements:**
+- `owner` must correspond to an existing user.
+- `startDate` and `endDate` are optional valid timestamps if provided.
+
+**Effects:**
+- Returns a list of unique identifiers (`mealIds`) for all meals logged by the `owner`, optionally filtered by date.
+
+**Request Body:**
+```json
+{
+  "ownerId": "user:Alice",
+  "includeDeleted": false
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "mealIds": ["ID"]
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/MealLog/getMealById
+
+**Description:** Retrieves a structured meal object by its unique identifier. (This is a duplicate of `_getMealObjectById` but without the underscore, indicating it might be an action that could have side-effects or be used differently).
+
+**Requirements:**
+- `mealId` must correspond to an existing meal object.
+
+**Effects:**
+- Returns the structured meal object associated with `mealId`. (Assuming a specific structured format like {owner, date, items, totalCalories}).
+
+**Request Body:**
+```json
+{
+  "mealId": "<meal-id>",
+  "callerId": "user:Alice"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "owner": "ID",
+  "date": "Number",
+  "items": ["String"],
+  "totalCalories": "Number"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+# API Specification: SwapSuggestions Concept
+
+**Purpose:** Facilitate the proposal and acceptance of item swaps between users.
+
+---
+
+## API Endpoints
+
+### POST /api/SwapSuggestions/propose
+
+**Description:** Allows a user to propose a swap of their item for another user's item.
+
+**Requirements:**
+- `proposer` and `accepter` must correspond to existing users.
+- `proposerItem` and `accepterItem` must correspond to existing items.
+- The `proposer` must own `proposerItem`.
+- The `accepter` must own `accepterItem`.
+
+**Effects:**
+- A new swap `proposal` is created, linking the `proposer`, `accepter`, and their respective items.
+- A unique identifier (`proposalId`) for the new proposal is generated and returned.
+
+**Request Body:**
+```json
+{
+  "proposer": "ID",
+  "proposerItem": "ID",
+  "accepter": "ID",
+  "accepterItem": "ID"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "proposalId": "ID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/SwapSuggestions/accept
+
+**Description:** Allows the recipient of a proposal to accept a swap, finalizing the item exchange.
+
+**Requirements:**
+- `proposalId` must correspond to an existing proposal.
+- The calling user must be the `accepter` of the proposal.
+- The proposal must be in a pending state.
+
+**Effects:**
+- The swap `proposal` identified by `proposalId` is marked as accepted.
+- The `proposerItem` is transferred to the `accepter`, and `accepterItem` is transferred to the `proposer`.
+- The proposal is finalized and cannot be modified further.
+
+**Request Body:**
+```json
+{
+  "proposalId": "ID"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/SwapSuggestions/_getProposal
+
+**Description:** Retrieves the details of a specific swap proposal by its unique identifier.
+
+**Requirements:**
+- `proposalId` must correspond to an existing proposal.
+
+**Effects:**
+- Returns the details of the proposal, including the `proposer`, `accepter`, their respective `items`, and the `status` of the proposal.
+
+**Request Body:**
+```json
+{
+  "proposalId": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "proposer": "ID",
+    "proposerItem": "ID",
+    "accepter": "ID",
+    "accepterItem": "ID",
+    "status": "String"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---
+
+### POST /api/SwapSuggestions/_getProposalsByOwner
+
+**Description:** Retrieves all swap proposals where a given user is either the proposer or the accepter.
+
+**Requirements:**
+- `owner` must correspond to an existing user.
+
+**Effects:**
+- Returns a list of all proposals involving the `owner`, including their IDs, associated items, and status.
+
+**Request Body:**
+```json
+{
+  "owner": "ID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "proposalId": "ID",
+    "proposer": "ID",
+    "proposerItem": "ID",
+    "accepter": "ID",
+    "accepterItem": "ID",
+    "status": "String"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+
+---

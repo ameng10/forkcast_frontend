@@ -1,19 +1,30 @@
 # Forkcast Frontend
 
-Vue 3 + Vite frontend for the food tracker app. Uses Axios to call the backend at `http://localhost:8000/api` and Pinia for state.
+Vue 3 + Vite app using Pinia and Axios. Backend base URL: http://localhost:8000/api
 
-## Features
-- Meal logging (record, update, delete, list)
-- Insight mining (process meal log, list patterns)
-- Food swaps (add/update foods, fetch suggested swaps)
-- Personal Q&A (ask, list, answer)
-- Quick check-ins (record, list)
+## Setup
 
-## Development
-1. Install deps
-2. Run dev server
+- Node.js 18+
+- Backend running at http://localhost:8000/api
 
-The token is stored in localStorage for simplicity via a Pinia store with persistence. For production, consider more secure storage and rotating tokens.
+## Install
 
-## Configuration
-- API base URL is configured in `src/services/api.js`.
+```sh
+npm install
+```
+
+## Run
+
+```sh
+npm run dev
+```
+
+Open the app at the URL shown (default http://localhost:5173).
+
+## QuickCheckIns
+
+- Set an Owner ID at the top.
+- Define a metric (name + unit), then record check-ins by metric name and value.
+- Filter and edit recent check-ins inline.
+
+Auth token is stored via Pinia with localStorage persistence.
