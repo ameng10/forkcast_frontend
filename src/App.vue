@@ -5,6 +5,7 @@
       <nav>
         <RouterLink to="/">Quick Check-Ins</RouterLink>
         <RouterLink to="/meals">Meals</RouterLink>
+        <RouterLink to="/qa">Personal Q&A</RouterLink>
       </nav>
     </header>
     <main>

@@ -5,7 +5,7 @@
         Metric:
         <input v-model.trim="metricFilter" placeholder="e.g. weight" />
       </label>
-      <button @click="applyFilter">Apply</button>
+  <button @click="applyFilter">Apply</button>
       <button @click="clearFilter" v-if="metricFilter">Clear</button>
     </div>
 

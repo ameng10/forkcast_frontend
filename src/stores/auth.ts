@@ -22,7 +22,8 @@ export const useAuthStore = defineStore('auth', {
   state: (): AuthState => loadPersisted(),
   actions: {
     setSession(ownerId: string, token: string | null = null) {
-      this.ownerId = ownerId
+      const norm = normalizeOwnerId(ownerId)
+      this.ownerId = norm
       this.token = token
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ ownerId: this.ownerId, token: this.token }))
     },
@@ -33,3 +34,10 @@ export const useAuthStore = defineStore('auth', {
     }
   }
 })
+
+function normalizeOwnerId(id: string) {
+  const trimmed = (id ?? '').trim()
+  if (!trimmed) return trimmed
+  // If no scheme provided, default to user:
+  return trimmed.includes(':') ? trimmed : `user:${trimmed}`
+}

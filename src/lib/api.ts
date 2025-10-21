@@ -87,7 +87,7 @@ export const QuickCheckInsAPI = {
   // Allow filtering by metric ID; send both metricId and metric for compatibility
   listByOwner(payload: { owner: string; metricId?: string; metric?: string; startDate?: number; endDate?: number }) {
     const body: any = { owner: payload.owner }
-    if (payload.metricId) body.metricId = payload.metricId
+  if (payload.metricId) { body.metricId = payload.metricId; body.metric = payload.metricId }
     if (payload.metric && !payload.metricId) body.metric = payload.metric
     if (payload.startDate) body.startDate = payload.startDate
     if (payload.endDate) body.endDate = payload.endDate
@@ -129,5 +129,48 @@ export const MealLogAPI = {
         }
         throw e
       })
+  }
+}
+
+// PersonalQA API helpers
+export const PersonalQAAPI = {
+  ingestFact(payload: { owner: string; fact: string }) {
+    return api.post('/PersonalQA/ingestFact', payload)
+      .then(r => r.data as { factId: string })
+      .catch(async (e) => {
+        if (e?.response?.status === 400 || e?.response?.status === 404) {
+          const alt = { requester: (payload as any).owner, fact: payload.fact }
+          const r2 = await api.post('/PersonalQA/ingestFact', alt)
+          return r2.data as { factId: string }
+        }
+        throw e
+      })
+  },
+  forgetFact(payload: { owner: string; factId: string }) {
+    return api.post('/PersonalQA/forgetFact', payload)
+      .then(r => r.data as {})
+      .catch(async (e) => {
+        if (e?.response?.status === 400 || e?.response?.status === 404) {
+          const alt = { requester: (payload as any).owner, factId: payload.factId }
+          const r2 = await api.post('/PersonalQA/forgetFact', alt)
+          return r2.data as {}
+        }
+        throw e
+      })
+  },
+  ask(payload: { requester: string; question: string }) {
+    return api.post('/PersonalQA/ask', payload).then(r => r.data as { answer: string })
+  },
+  getUserFacts(payload: { owner: string }) {
+    return api.post('/PersonalQA/_getUserFacts', payload).then(r => {
+      const d = r.data as any
+      return Array.isArray(d) ? d : (d ? [d] : [])
+    })
+  },
+  getUserQAs(payload: { owner: string }) {
+    return api.post('/PersonalQA/_getUserQAs', payload).then(r => {
+      const d = r.data as any
+      return Array.isArray(d) ? d : (d ? [d] : [])
+    })
   }
 }

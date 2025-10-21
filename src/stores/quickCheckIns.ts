@@ -55,7 +55,8 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
             metricId = undefined
           }
         }
-        const list = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId, metricId: metricId, startDate: params?.startDate, endDate: params?.endDate })
+  const listRaw = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId, metricId: metricId, startDate: params?.startDate, endDate: params?.endDate })
+  const list = metricId ? (listRaw || []).filter((ci: any) => (ci.metric === metricId) || (ci.metricId === metricId)) : (listRaw || [])
         // Normalize timestamps and names if present
         // Build a metricId -> name map from any cached metrics we have
         const nameMap = new Map<string, string>()

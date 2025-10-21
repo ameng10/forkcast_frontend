@@ -5,7 +5,7 @@
     <div class="auth-box">
       <label>
         Owner ID:
-        <input v-model.trim="owner" placeholder="user-123" />
+  <input v-model.trim="owner" placeholder="Alice or user:Alice" />
       </label>
       <button @click="saveOwner" :disabled="!owner">Use Owner</button>
       <button @click="clearOwner" v-if="auth.ownerId">Clear</button>
