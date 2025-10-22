@@ -3,11 +3,12 @@ import { MealLogAPI } from '../lib/api'
 import { useAuthStore } from './auth'
 
 export type MealItem = { id?: string; name?: string; [k: string]: any }
-export type MealRecord = { mealId: string; at?: string; items?: MealItem[]; notes?: string; [k: string]: any }
+export type MealRecord = { mealId: string; at?: string | number; date?: string | number; items?: MealItem[]; notes?: string; [k: string]: any }
+export type MealSummary = { mealId: string; at?: string | number; items?: MealItem[] }
 
 export const useMealLogStore = defineStore('mealLog', {
   state: () => ({
-    meals: [] as string[], // store mealIds from getMealsForOwner
+  meals: [] as MealSummary[], // store summaries for list view
     current: null as MealRecord | null,
     loading: false,
     error: null as string | null,
@@ -21,12 +22,23 @@ export const useMealLogStore = defineStore('mealLog', {
       this.error = null
       try {
         const res = await MealLogAPI.getMealsForOwner({ ownerId: auth.ownerId, includeDeleted: includeDeleted ?? this.includeDeleted })
-        // Support array or object response
-        if (Array.isArray(res)) {
-          this.meals = res as unknown as string[]
-        } else {
-          this.meals = (res?.mealIds as string[]) || []
+        const toSummary = (x: any): MealSummary => {
+          if (x == null) return { mealId: '' }
+          if (typeof x === 'string') return { mealId: x }
+          const mealId = String(x.mealId || x.id || x._id || x.mealObjectId || x.mealDocumentId || '')
+          const at = x.at ?? x.date
+          const items = Array.isArray(x.items) ? x.items as MealItem[] : undefined
+          return { mealId, at, items }
         }
+        let summaries: MealSummary[] = []
+        if (Array.isArray(res)) {
+          summaries = (res as any[]).map(toSummary)
+        } else if (res && Array.isArray((res as any).mealIds)) {
+          summaries = ((res as any).mealIds as any[]).map(toSummary)
+        } else if (res && typeof res === 'object') {
+          summaries = Object.values(res as Record<string, any>).map(toSummary)
+        }
+        this.meals = summaries.filter(s => !!s.mealId)
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to load meals'
       } finally { this.loading = false }

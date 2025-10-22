@@ -63,14 +63,27 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
         for (const [n, arr] of this.metricsByName.entries()) {
           for (const m of arr) if (m.metricId) nameMap.set(m.metricId, m.name)
         }
-        const norm = (list || []).map((ci: any) => ({
-          checkInId: ci.checkInId || ci._id || ci.id,
-          metric: ci.metric,
-          metricName: ci.metricName || (ci.metric ? nameMap.get(ci.metric) : undefined),
-          value: ci.value,
-          timestamp: ci.timestamp ?? (ci.at ? Date.parse(ci.at) : undefined),
-          at: ci.at
-        }))
+        const norm = (list || []).map((ci: any) => {
+          // Normalize timestamp: consider timestamp/ts/date (seconds or ms) and at (ISO)
+          let ts: number | undefined = undefined
+          const num = (v: any) => (v == null ? undefined : Number(v))
+          let cand = num(ci.timestamp) ?? num(ci.ts) ?? num(ci.date)
+          if (cand != null) {
+            ts = cand < 1e12 ? cand * 1000 : cand
+          } else if (ci.at) {
+            const p = Date.parse(ci.at)
+            ts = Number.isNaN(p) ? undefined : p
+          }
+          const atIso = ts ? new Date(ts).toISOString() : (ci.at || undefined)
+          return {
+            checkInId: ci.checkInId || ci._id || ci.id,
+            metric: ci.metric,
+            metricName: ci.metricName || (ci.metric ? nameMap.get(ci.metric) : undefined),
+            value: ci.value,
+            timestamp: ts,
+            at: atIso
+          }
+        })
         this.checkIns = norm.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to load check-ins'

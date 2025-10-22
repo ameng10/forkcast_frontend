@@ -49,29 +49,23 @@ export const QuickCheckInsAPI = {
     })
   },
   edit(payload: { owner: string; checkInId: string; newValue: number; newTimestamp?: number }) {
-    // Prefer backend flow: { owner, checkIn, value, at? }
-    const primary = {
+    // Spec-first: { owner, checkInId, newValue, newTimestamp? }
+    const tsMs = payload.newTimestamp
+    const tsSec = tsMs != null ? Math.floor(tsMs / 1000) : undefined
+    const atIso = tsMs != null ? new Date(tsMs).toISOString() : undefined
+    const specBody: any = {
       owner: (payload as any).owner,
+      checkInId: payload.checkInId,
+      newValue: payload.newValue,
+      ...(tsSec != null ? { newTimestamp: tsSec } : {}),
+      ...(tsSec != null ? { timestamp: tsSec } : {}),
+      // Provide ISO too to help backends that accept `at`
+      ...(atIso ? { at: atIso } : {}),
+      // Also include alternate shape proactively for compatibility
       checkIn: payload.checkInId,
-      value: payload.newValue,
-      ...(payload.newTimestamp ? { at: new Date(payload.newTimestamp).toISOString() } : {})
+      value: payload.newValue
     }
-    return api.post('/QuickCheckIns/edit', primary)
-      .then(r => r.data as {})
-      .catch(async (e) => {
-        // Fallback to previous shape
-        const fallback = {
-          owner: (payload as any).owner,
-          checkInId: payload.checkInId,
-          newValue: payload.newValue,
-          newTimestamp: payload.newTimestamp
-        }
-        if (e?.response?.status === 400 || e?.response?.status === 404) {
-          const r2 = await api.post('/QuickCheckIns/edit', fallback)
-          return r2.data as {}
-        }
-        throw e
-      })
+    return api.post('/QuickCheckIns/edit', specBody).then(r => r.data as {})
   },
   getCheckIn(payload: { checkInId: string }) {
     return api.post('/QuickCheckIns/_getCheckIn', payload).then(r => r.data as Array<{ checkInId: string; owner: string; metricName: string; value: number; timestamp: number }>)
@@ -147,30 +141,96 @@ export const PersonalQAAPI = {
       })
   },
   forgetFact(payload: { owner: string; factId: string }) {
-    return api.post('/PersonalQA/forgetFact', payload)
-      .then(r => r.data as {})
-      .catch(async (e) => {
-        if (e?.response?.status === 400 || e?.response?.status === 404) {
-          const alt = { requester: (payload as any).owner, factId: payload.factId }
-          const r2 = await api.post('/PersonalQA/forgetFact', alt)
-          return r2.data as {}
+    // Try a few payload variants for broader backend compatibility
+    const attempts: Array<Record<string, any>> = [
+      // Primary
+      { owner: (payload as any).owner, factId: payload.factId },
+      // Owner with alternate id keys
+      { owner: (payload as any).owner, id: payload.factId },
+      { owner: (payload as any).owner, fact: payload.factId },
+      // Requester variants
+      { requester: (payload as any).owner, factId: payload.factId },
+      { requester: (payload as any).owner, id: payload.factId },
+      { requester: (payload as any).owner, fact: payload.factId }
+    ]
+    const run = async () => {
+      let lastErr: any
+      for (const body of attempts) {
+        try {
+          const r = await api.post('/PersonalQA/forgetFact', body)
+          return r.data as {}
+        } catch (err: any) {
+          lastErr = err
+          // Try next variant only for typical contract errors
+          if (![400, 404, 422].includes(err?.response?.status)) throw err
         }
-        throw e
-      })
+      }
+      throw lastErr
+    }
+    return run()
   },
   ask(payload: { requester: string; question: string }) {
     return api.post('/PersonalQA/ask', payload).then(r => r.data as { answer: string })
   },
   getUserFacts(payload: { owner: string }) {
-    return api.post('/PersonalQA/_getUserFacts', payload).then(r => {
-      const d = r.data as any
-      return Array.isArray(d) ? d : (d ? [d] : [])
-    })
+    const normalize = (item: any) => {
+      if (item == null) return { factId: '', fact: '' }
+      if (typeof item === 'string') return { factId: item, fact: item }
+      // Collect candidate id/text fields across common shapes
+      const idCandidates = [
+        item.factId, item._id, item.id, item.key, item.identifier, item.uuid, item.docId, item.documentId,
+        item?.document?._id, item?.document?.id
+      ]
+      const textCandidates = [
+        item.fact, item.text, item.value, item.content, item.statement, item.body, item.note,
+        item.name, item.title, item.message, item.description,
+        item?.data?.text, item?.data?.fact, item?.payload?.text, item?.payload?.fact,
+        item?.document?.fact, item?.document?.text, item?.document?.content
+      ]
+      // Strict normalization: if there is no clear text field, leave it blank (do NOT fall back to owner or _id for text)
+      const id = idCandidates.find((v: any) => typeof v === 'string' && v.trim().length > 0)
+      const txt = textCandidates.find((v: any) => typeof v === 'string' && v.trim().length > 0)
+      return { factId: String(id ?? ''), fact: String(txt ?? '') }
+    }
+    return api.post('/PersonalQA/_getUserFacts', payload)
+      .then(r => {
+        const d = r.data as any
+        const arr = Array.isArray(d) ? d : (d ? [d] : [])
+        return arr.map(normalize) as Array<{ factId: string; fact: string }>
+      })
+      .catch(async (e) => {
+        if (e?.response?.status === 400 || e?.response?.status === 404) {
+          const alt = { requester: (payload as any).owner }
+          const r2 = await api.post('/PersonalQA/_getUserFacts', alt)
+          const d2 = r2.data as any
+          const arr2 = Array.isArray(d2) ? d2 : (d2 ? [d2] : [])
+          return arr2.map(normalize) as Array<{ factId: string; fact: string }>
+        }
+        throw e
+      })
   },
   getUserQAs(payload: { owner: string }) {
-    return api.post('/PersonalQA/_getUserQAs', payload).then(r => {
-      const d = r.data as any
-      return Array.isArray(d) ? d : (d ? [d] : [])
-    })
+    return api.post('/PersonalQA/_getUserQAs', payload)
+      .then(r => {
+        const d = r.data as any
+        const arr = Array.isArray(d) ? d : (d ? [d] : [])
+        return arr.map((qa: any) => ({
+          question: qa?.question ?? qa?.q ?? '',
+          answer: qa?.answer ?? qa?.a ?? ''
+        })) as Array<{ question: string; answer: string }>
+      })
+      .catch(async (e) => {
+        if (e?.response?.status === 400 || e?.response?.status === 404) {
+          const alt = { requester: (payload as any).owner }
+          const r2 = await api.post('/PersonalQA/_getUserQAs', alt)
+          const d2 = r2.data as any
+          const arr2 = Array.isArray(d2) ? d2 : (d2 ? [d2] : [])
+          return arr2.map((qa: any) => ({
+            question: qa?.question ?? qa?.q ?? '',
+            answer: qa?.answer ?? qa?.a ?? ''
+          })) as Array<{ question: string; answer: string }>
+        }
+        throw e
+      })
   }
 }

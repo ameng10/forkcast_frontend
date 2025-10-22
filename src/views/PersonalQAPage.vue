@@ -20,13 +20,17 @@
             <input v-model.trim="newFact" placeholder="e.g. I feel great after oatmeal" />
             <button @click="addFact" :disabled="!canAddFact || pqa.loading">{{ pqa.loading ? 'Adding…' : 'Add Fact' }}</button>
           </div>
+          <div class="row" style="justify-content: space-between;">
+            <span>{{ pqa.facts.length }} fact(s)</span>
+            <button @click="pqa.refreshFacts" :disabled="pqa.loading">{{ pqa.loading ? 'Loading…' : 'Refresh Facts' }}</button>
+          </div>
           <ul class="facts">
-            <li v-for="f in pqa.facts" :key="f.factId">
-              <span>{{ f.fact }}</span>
-              <button @click="removeFact(f.factId)" :disabled="pqa.loading">Forget</button>
+            <li v-for="f in pqa.facts" :key="f.factId || Math.random().toString(36).slice(2)" class="fact-row">
+              <div class="body">{{ f.fact || '(no text)' }}</div>
+              <div class="actions"><button @click="removeFact(f.factId)" :disabled="pqa.loading || !f.factId">Forget</button></div>
             </li>
           </ul>
-          <button @click="pqa.refreshFacts" :disabled="pqa.loading">Refresh Facts</button>
+          <p v-if="!pqa.loading && pqa.facts.length === 0">No facts yet.</p>
         </div>
       </div>
       <div>
@@ -78,11 +82,13 @@ function clearOwner() {
 }
 
 async function addFact() {
+  if (!newFact.value) return
   await pqa.ingestFact(newFact.value)
   newFact.value = ''
 }
 async function removeFact(id: string) {
-  await pqa.forgetFact(id)
+  if (!id) return
+  try { await pqa.forgetFact(id) } catch {}
 }
 async function ask() {
   const ans = await pqa.ask(question.value)
@@ -102,6 +108,7 @@ watch(() => auth.ownerId, (id) => {
 .row { display:flex; gap:8px; align-items:center; }
 .card { border:1px solid #e5e5e5; border-radius:8px; padding:12px; margin-bottom: 16px; }
 .facts, .qas { list-style:none; padding:0; display:flex; flex-direction:column; gap:8px; }
+.fact-row { display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid #eee; border-radius:8px; padding:8px; }
 .q { font-weight: 600; }
 .a { color:#333; }
 .err { color:#b00020; }

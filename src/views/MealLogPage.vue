@@ -63,8 +63,14 @@
           </label>
           <button @click="refreshMeals" :disabled="ml.loading">{{ ml.loading ? 'Loading…' : 'Refresh' }}</button>
           <ul class="ids">
-            <li v-for="id in ml.meals" :key="id">
-              <button class="id-btn" @click="selectMeal(id)"><code>{{ id }}</code></button>
+            <li v-for="m in ml.meals" :key="m.mealId">
+              <button class="id-btn" @click="selectMeal(m.mealId)">
+                <div class="meal-row">
+                  <code class="meal-id">{{ shorten(m.mealId) }}</code>
+                  <span class="meal-time">{{ formatAt(m.at) }}</span>
+                  <span class="meal-items">{{ summarizeItems(m.items) }}</span>
+                </div>
+              </button>
             </li>
           </ul>
           <p v-if="!ml.loading && ml.meals.length === 0">No meals yet.</p>
@@ -92,7 +98,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, watchEffect, nextTick } from 'vue'
 import { useAuthStore } from '../stores/auth'
-import { useMealLogStore, type MealItem } from '../stores/mealLog'
+import { useMealLogStore, type MealItem, type MealSummary } from '../stores/mealLog'
 
 const auth = useAuthStore()
 const ml = useMealLogStore()
@@ -174,6 +180,20 @@ async function selectMeal(id: string) {
   await nextTick()
   editMealIdInput.value?.focus()
 }
+
+function shorten(id: string) { return id?.length > 10 ? id.slice(0, 6) + '…' + id.slice(-4) : id }
+function formatAt(at: any) {
+  if (!at) return ''
+  try {
+    const d = typeof at === 'number' ? new Date(at) : new Date(String(at))
+    return isNaN(d.getTime()) ? '' : d.toLocaleString()
+  } catch { return '' }
+}
+function summarizeItems(items?: MealItem[]) {
+  if (!items || items.length === 0) return ''
+  const names = items.map(i => (i?.name || i?.id || '').toString().trim()).filter(Boolean)
+  return names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '')
+}
 </script>
 
 <style scoped>
@@ -188,5 +208,9 @@ async function selectMeal(id: string) {
 .hint { color:#666; font-size: 12px; }
 .ids { list-style: none; padding: 0; display: grid; gap: 6px; }
 .id-btn { background: transparent; border: 1px solid #ddd; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+.meal-row { display:flex; gap:8px; align-items:center; justify-content:flex-start; }
+.meal-id { color:#555; }
+.meal-time { color:#555; font-size:12px; }
+.meal-items { color:#222; }
 .kv { display: grid; grid-template-columns: 100px 1fr; gap: 8px; margin: 4px 0; }
 </style>
