@@ -42,7 +42,8 @@ export const QuickCheckInsAPI = {
   },
   // Define metric by name only; normalize response to metricId
   defineMetric(payload: { name: string }) {
-    return api.post('/QuickCheckIns/defineMetric', payload).then(r => {
+    const body: any = { name: payload.name }
+    return api.post('/QuickCheckIns/defineMetric', body).then(r => {
       const d = r.data as any
       const metricId = d?.metric || d?.metricId || d?.id || d?._id
       return { metricId } as { metricId: string }
@@ -78,6 +79,54 @@ export const QuickCheckInsAPI = {
       return arr.map((m: any) => ({ metricId: m?._id || m?.id || m?.metricId || m?.metric, name: m?.name, unit: m?.unit })) as Array<{ metricId: string; name: string; unit?: string }>
     })
   },
+  // Rename metric by id or by (id,name). Fallback to alternate shapes.
+  renameMetric(payload: { metricId: string; name: string; owner?: string }) {
+    const base: any = { metricId: payload.metricId, metric: payload.metricId, id: payload.metricId, name: payload.name }
+    if (payload.owner) base.owner = payload.owner
+    return api.post('/QuickCheckIns/renameMetric', base).then(r => r.data as {})
+      .catch(async (e) => {
+        if ([400, 404, 422].includes(e?.response?.status)) {
+          // Try underscore or alternate field names
+          try { const r2 = await api.post('/QuickCheckIns/_renameMetric', base); return r2.data as {} } catch {}
+          try { const r3 = await api.post('/QuickCheckIns/editMetric', { id: payload.metricId, metricId: payload.metricId, metric: payload.metricId, name: payload.name, owner: payload.owner }); return r3.data as {} } catch {}
+          try { const r4 = await api.post('/QuickCheckIns/_editMetric', { id: payload.metricId, metricId: payload.metricId, metric: payload.metricId, name: payload.name, owner: payload.owner }); return r4.data as {} } catch {}
+        }
+        throw e
+      })
+  },
+  deleteMetric(payload: { metricId: string; owner?: string }) {
+    const base: any = { metricId: payload.metricId, metric: payload.metricId, id: payload.metricId }
+    if (payload.owner) base.owner = payload.owner
+    const tryList = [
+      ['/QuickCheckIns/deleteMetric', base],
+      ['/QuickCheckIns/_deleteMetric', base],
+      ['/QuickCheckIns/removeMetric', base],
+      ['/QuickCheckIns/_removeMetric', base]
+    ] as const
+    const run = async () => {
+      let lastErr: any
+      for (const [url, body] of tryList) {
+        try {
+          const r = await api.post(url, body)
+          const data = r.data as any
+          if (data && typeof data === 'object' && typeof data.error === 'string' && data.error) {
+            throw new Error(data.error)
+          }
+          return data as {}
+        } catch (err: any) {
+          lastErr = err
+          const code = err?.response?.status
+          if (code === 404) {
+            // Treat not-found as already-deleted success
+            return {}
+          }
+          if (![400,404,422].includes(code)) throw err
+        }
+      }
+      throw lastErr
+    }
+    return run()
+  },
   // Allow filtering by metric ID; send both metricId and metric for compatibility
   listByOwner(payload: { owner: string; metricId?: string; metric?: string; startDate?: number; endDate?: number }) {
     const body: any = { owner: payload.owner }
@@ -86,6 +135,49 @@ export const QuickCheckInsAPI = {
     if (payload.startDate) body.startDate = payload.startDate
     if (payload.endDate) body.endDate = payload.endDate
     return api.post('/QuickCheckIns/_listCheckInsByOwner', body).then(r => r.data as any[])
+  }
+  ,
+  // List all metrics for an owner (used to map names/units)
+  listMetricsForOwner(payload: { owner: string }) {
+    const body: any = { owner: payload.owner, requester: payload.owner }
+    const endpoints = [
+      '/QuickCheckIns/_listMetricsForOwner',
+      '/QuickCheckIns/listMetricsForOwner',
+      '/QuickCheckIns/getMetricsForOwner',
+      '/QuickCheckIns/_getMetricsForOwner',
+      '/QuickCheckIns/listMetrics',
+      '/QuickCheckIns/_listMetrics'
+    ]
+    const normalize = (arr: any): Array<{ metricId: string; name: string; unit?: string }> => {
+      const list = Array.isArray(arr) ? arr : (arr ? [arr] : [])
+      return list.map((m: any) => ({
+        metricId: m?.metricId || m?.metric || m?.id || m?._id,
+        name: m?.name || m?.metricName || m?.label || '',
+        unit: m?.unit || m?.units || m?.u
+      })).filter(x => x.metricId)
+    }
+    const run = async () => {
+      let lastErr: any
+      for (const url of endpoints) {
+        try { const r = await api.post(url, body); return normalize(r.data) } catch (err: any) {
+          lastErr = err
+          if (![400,404,422].includes(err?.response?.status)) throw err
+        }
+      }
+      throw lastErr
+    }
+    return run()
+  },
+  // Permanently delete a check-in by id for an owner
+  deleteCheckIn(payload: { owner: string; checkIn: string }) {
+    const body: any = { owner: payload.owner, checkIn: payload.checkIn, checkInId: payload.checkIn, id: payload.checkIn }
+    return api.post('/QuickCheckIns/delete', body).then(r => r.data as {})
+      .catch(async (e) => {
+        if ([400,404,422].includes(e?.response?.status)) {
+          try { const r2 = await api.post('/QuickCheckIns/_delete', body); return r2.data as {} } catch {}
+        }
+        throw e
+      })
   }
 }
 

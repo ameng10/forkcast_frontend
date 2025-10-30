@@ -112,54 +112,7 @@ export const usePersonalQAStore = defineStore('personalQA', {
       return null
     },
 
-    async buildWebParagraph(question: string, intro?: string): Promise<string> {
-      const lead = intro?.trim() ? `${intro.trim()} ` : ''
-      try {
-        const summary = await this.fetchWikipediaSummary(question)
-        if (summary) {
-          const normalized = summary.replace(/\s+/g, ' ').trim()
-          const trimmed = this.limitWords(normalized, 80)
-          return `${lead}Here's what I found from a quick search: ${trimmed}`.trim()
-        }
-      } catch {
-        // Ignore fetch errors and fall through to default messaging
-      }
-      return `${lead}I couldn't retrieve a quick public summary right now. Please consult a trusted health source or a medical professional for more detail.`.trim()
-    },
-
-    wordCount(s: string): number {
-      const txt = (s || '').trim()
-      if (!txt) return 0
-      const parts = txt.split(/\s+/g)
-      return parts.filter(Boolean).length
-    },
-
-    shouldRequestWeb(draft: any): boolean {
-      if (!draft || typeof draft !== 'object') return false
-      const rawFlag = (draft.needs_web ?? draft.needsWeb ?? draft.requires_web ?? draft.requiresWeb) as unknown
-      if (typeof rawFlag === 'boolean') return rawFlag
-      if (typeof rawFlag === 'string') {
-        const lowered = rawFlag.toLowerCase()
-        if (['true', 'yes', 'y', '1'].includes(lowered)) return true
-        if (['false', 'no', 'n', '0'].includes(lowered)) return false
-      }
-      const answer = typeof draft.answer === 'string' ? draft.answer.toLowerCase() : ''
-      return /out of scope|insufficient|not enough|need (?:more|additional) data|no relevant personal/i.test(answer)
-    },
-
-    async summarizeAnswer(requester: string, answer: string): Promise<string> {
-      const prompt = `Summarize the following response for the user in no more than 3 sentences and 90 words. Return STRICT JSON of the form {"summary":"..."}.\nResponse: ${answer}`
-      try {
-        const { parsed, raw } = await askLLMJson<any>(requester, prompt)
-        const data = parsed && typeof parsed === 'object' ? parsed : this.safeParseJSON(raw)
-        if (data && typeof data.summary === 'string' && data.summary.trim()) {
-          return this.limitWords(data.summary.trim(), 90)
-        }
-      } catch {
-        // Fall back to local truncation below
-      }
-      return this.limitWords(answer, 90)
-    },
+  // Unused helpers from prior iteration removed to match example minimalism
 
   // Optional: normalized recent meals (kept for endpoints correctness; not used in ask flow)
     async getRecentMeals(ownerId: string) {
@@ -314,121 +267,126 @@ export const usePersonalQAStore = defineStore('personalQA', {
       const requester = auth.ownerId!
       this.pushUser(q)
 
-      const finalize = (text: string) => {
-        const clean = text.replace(/\s*\n+\s*/g, ' ').trim()
-        const limited = this.limitWords(clean, 150)
-        this.pushAssistant(limited)
-        this.qas.push({ question: q, answer: limited })
-        return limited
+      // Ensure we have the latest facts
+      if (!this.facts.length) {
+        try { await this.refreshFacts() } catch { /* best-effort */ }
       }
 
-      const [meals, checkIns] = await Promise.all([
-        this.getRecentMeals(requester),
-        this.getRecentCheckIns(requester)
+      // Build a combined selection of entries: meals, check-ins, and notes (facts)
+      const [meals, checkins] = await Promise.all([
+        this.getRecentMeals(requester).catch(() => []),
+        this.getRecentCheckIns(requester).catch(() => [])
       ])
 
-      const factItems = this.facts
-        .filter((f) => f.fact && f.fact.trim().length)
-        .slice(0, 12)
-        .map((f) => ({
-          id: String(f.factId),
-          text: f.fact.trim(),
-          source: 'fact' as const
-        }))
+      type Entry = { id: string; text: string; at?: string; src: 'note' | 'meal' | 'check_in' }
+      const noteEntries: Entry[] = this.facts
+        .filter(f => f.fact && f.fact.trim())
+        .map(f => ({ id: String(f.factId), text: f.fact.trim(), src: 'note' as const }))
 
-      const mealItems = (meals || []).slice(0, 5).map((meal: any, idx: number) => {
-        const id = meal.mealId ? `meal-${meal.mealId}` : `meal-${idx}`
-        const items = Array.isArray(meal.items)
-          ? meal.items
-              .map((item: any) => (typeof item === 'string' ? item.trim() : (item?.name || item?.title || String(item || '')).trim()))
-              .filter(Boolean)
-          : []
-        const parts = [
-          `Meal at ${meal.at}`,
-          items.length ? `Items: ${items.join(', ')}` : '',
-          meal.notes ? `Notes: ${meal.notes}` : ''
-        ].filter(Boolean)
-        return { id, text: parts.join(' | ').trim(), source: 'meal' as const }
+      const mealEntries: Entry[] = (meals || []).map((m: any) => {
+        const items = Array.isArray(m.items) ? m.items.join(', ') : ''
+        const notes = m.notes ? `; notes: ${m.notes}` : ''
+        const body = [items && `items: ${items}`].filter(Boolean).join('; ')
+        const text = body ? `Meal ${body}${notes}` : (m.notes ? `Meal notes: ${m.notes}` : 'Meal entry')
+        return { id: `meal_${m.mealId}`, text, at: m.at, src: 'meal' as const }
       })
 
-      const checkInItems = (checkIns || []).slice(0, 6).map((entry: any, idx: number) => {
-        const baseId = entry.metricId ? `check-${entry.metricId}` : `check-${idx}`
-        const id = idx === 0 ? baseId : `${baseId}-${idx}`
-        const label = (entry.metricName || entry.metricId || 'metric').toString().trim() || 'metric'
-        const parts = [
-          `${label}: ${entry.value}`,
-          entry.ts ? `at ${entry.ts}` : ''
-        ].filter(Boolean)
-        return { id, text: parts.join(' | ').trim(), source: 'check' as const }
+      const ciEntries: Entry[] = (checkins || []).map((ci: any) => {
+        const label = ci.metricName || ci.metricId
+        const text = `${label}: ${ci.value}`
+        const ts = ci.ts
+        const tsComp = ts ? new Date(ts).getTime() : Date.now()
+        return { id: `ci_${ci.metricId}_${tsComp}`, text, at: ts, src: 'check_in' as const }
       })
 
-      const contextItems = [...factItems, ...mealItems, ...checkInItems]
-      const contextIds = new Set(contextItems.map((item) => item.id))
-
-      if (contextItems.length === 0) {
-        const fallback = await this.buildWebParagraph(q, 'I checked your meals, check-ins, and saved facts but there is no relevant personal data yet.')
-        this.backendDown = false
-        return finalize(fallback)
+      const parseAt = (s?: string) => {
+        const t = s ? Date.parse(s) : NaN
+        return Number.isFinite(t) ? t : -Infinity
       }
+      let combined: Entry[] = [...mealEntries, ...ciEntries, ...noteEntries]
+      combined.sort((a, b) => parseAt(b.at) - parseAt(a.at))
+      // Ensure at least a couple of note facts if available
+      const topLogs = combined.slice(0, 12)
+      if (noteEntries.length > 0) {
+        const ensuredNotes = noteEntries.slice(0, 3)
+        const existingIds = new Set(topLogs.map(e => e.id))
+        const merged = [...ensuredNotes, ...topLogs.filter(e => !existingIds.has(e.id))]
+        combined = merged
+      } else {
+        combined = topLogs
+      }
+      const uniq = (arr: Entry[]) => {
+        const seen = new Set<string>()
+        const out: Entry[] = []
+        for (const e of arr) { if (!seen.has(e.id)) { seen.add(e.id); out.push(e) } }
+        return out
+      }
+      const selection = uniq(combined).slice(0, 12)
 
-      const factsBlock = factItems.length ? factItems.map((item) => `${item.id}: ${item.text}`).join('\n') : '(none)'
-      const mealsBlock = mealItems.length ? mealItems.map((item) => `${item.id}: ${item.text}`).join('\n') : '(none)'
-      const checkInsBlock = checkInItems.length ? checkInItems.map((item) => `${item.id}: ${item.text}`).join('\n') : '(none)'
+      const factsBlock = selection
+        .map((e) => `${e.id}: ${e.text} (src:${e.src}${e.at ? `, at:${e.at}` : ''})`)
+        .join('\n')
 
-      const prompt = [
-        'You are Gemini, a friendly health assistant answering the user as a chatbot.',
-        'You must return STRICT JSON in the form {"answer":"...","citations":["id1","id2"],"confidence":0.0,"needs_web":false}.',
-        'Rely on the provided personal context (facts, meals, check-ins) whenever possible.',
-        'Cite only IDs exactly as they appear below. Keep the answer to 120 words or fewer and write a single paragraph.',
-        'If the personal context is insufficient to answer, set "needs_web" to true, explain briefly why in the answer, keep confidence ≤ 0.5, and do not invent external facts.',
-        'Question: {{question}}',
-        'Facts (id: text):',
-        '{{facts}}',
-        'Meals (id: text):',
-        '{{meals}}',
-        'Quick check-ins (id: text):',
-        '{{checkIns}}'
-      ].join('\n')
+      const template = `You are a careful coach answering ONLY with the user's provided facts.
+Return STRICT JSON of the shape:
+{"answer": "...", "citations": ["factId1","factId2"], "confidence": 0.0}
+Rules:
+- Keep the answer ≤ 120 words.
+- Every claim MUST be supported by provided facts; cite by fact ids.
+- You MUST ONLY use fact IDs exactly as shown below in your citations. Do NOT invent, change, or guess any IDs. If you cite a fact, copy its ID exactly as given.
+- If facts conflict, clearly describe the nature of the conflict, mention uncertainty, and lower confidence. Suggest what additional data would help resolve the ambiguity.
+- If evidence is weak or inconclusive, make a clear, reasoned conclusion based on the closest facts, but lower the confidence accordingly. Never refuse to answer. If the data is inconclusive, suggest what a web search might reveal or what further information would be needed, and include this in your answer.
+- For every answer, you must always cite at least one fact from the provided list, even if it is only tangentially related to the question.
+- When reasoning about meal timing, interpret times after 20:00 as 'late' and before 18:00 as 'early'. Use this in your answer if relevant.
+ - If possible, include one concrete numeric example from the facts to support your answer.
+- If the question is out of scope for the provided facts, state this clearly, cite the closest fact, and suggest a web search or further data. In this case, also provide a clearly labeled "Web note" with a general knowledge answer, separated from the personal answer.
+Question: {{question}}
+Facts (id: text):
+{{facts}}`
+      const prompt = template
         .replace('{{question}}', q)
-        .replace('{{facts}}', factsBlock)
-        .replace('{{meals}}', mealsBlock)
-        .replace('{{checkIns}}', checkInsBlock)
+        .replace('{{facts}}', factsBlock || '(none)')
 
-      const makeAnswer = async (): Promise<{ text: string; backendIssue: boolean }> => {
+      const tryAsk = async () => {
+        const { parsed, raw } = await askLLMJson<any>(requester, prompt)
+        const result = parsed && typeof parsed === 'object' ? parsed : this.safeParseJSON(raw)
+        const ids = new Set(selection.map((e) => e.id))
+        let ansText = ''
         try {
-          const { parsed, raw } = await askLLMJson<any>(requester, prompt)
-          const result = parsed && typeof parsed === 'object' ? parsed : this.safeParseJSON(raw)
+          this.validateDraft(result, ids)
+          ansText = String(result.answer || '').trim()
+        } catch {
+          const lastFew = selection.slice(-3).map((e) => ({ factId: e.id, fact: e.text }))
+          let local = this.conservativeSummary(q, lastFew as Fact[])
           try {
-            this.validateDraft(result, contextIds)
-          } catch {
-            const fallback = await this.buildWebParagraph(q, 'I reviewed your personal logs but the assistant response was incomplete.')
-            return { text: fallback, backendIssue: false }
-          }
-          const rawAnswer = String(result.answer ?? '').replace(/\s+/g, ' ').trim()
-          let trimmedAnswer = this.limitWords(rawAnswer, 140)
-          if (this.wordCount(trimmedAnswer) > 120) {
-            trimmedAnswer = await this.summarizeAnswer(requester, trimmedAnswer)
-          }
-
-          if (this.shouldRequestWeb(result)) {
-            const fallback = await this.buildWebParagraph(q, trimmedAnswer || 'I checked your personal data but need outside sources to respond usefully.')
-            return { text: fallback, backendIssue: false }
-          }
-
-          return { text: trimmedAnswer, backendIssue: false }
-        } catch (err) {
-          throw err
+            const web = await this.fetchWikipediaSummary(q)
+            if (web) {
+              const short = this.limitWords(web, 40)
+              local = `${local}\nWeb note: ${short}`
+            }
+          } catch { /* optional */ }
+          ansText = local
         }
+        const clean = ansText
+        this.pushAssistant(clean)
+        this.qas.push({ question: q, answer: clean })
+        this.backendDown = false
+        return clean
       }
 
       try {
-        const { text, backendIssue } = await makeAnswer()
-        this.backendDown = backendIssue
-        return finalize(text)
-      } catch (err) {
+        return await tryAsk()
+      } catch (e: any) {
         this.backendDown = true
-        const fallback = await this.buildWebParagraph(q, 'I checked your meals, check-ins, and saved facts but ran into an issue reaching the assistant.')
-        return finalize(fallback)
+        const lastFew = selection.slice(-3).map((e) => ({ factId: e.id, fact: e.text }))
+        let local = this.conservativeSummary(q, lastFew as Fact[])
+        try {
+          const web = await this.fetchWikipediaSummary(q)
+          if (web) local = `${local}\nWeb note: ${this.limitWords(web, 40)}`
+        } catch { /* best-effort */ }
+        const cleanLocal = local || 'Here’s a quick perspective based on what I could find.'
+        this.pushAssistant(cleanLocal); this.qas.push({ question: q, answer: cleanLocal })
+        return cleanLocal
       }
     } catch (e: any) {
       this.error = e?.message ?? 'Failed to ask question'

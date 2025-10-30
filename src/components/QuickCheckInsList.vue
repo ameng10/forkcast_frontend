@@ -1,29 +1,54 @@
 <template>
   <div>
     <div class="filters">
-      <label>
+  <label>
         Metric:
-        <input v-model.trim="metricFilter" placeholder="e.g. weight" />
+        <input v-model.trim="metricFilter" list="metricOptions" placeholder="e.g. weight" />
+        <datalist id="metricOptions">
+          <option v-for="m in store.allMetrics" :key="m.metricId" :value="m.name" />
+        </datalist>
       </label>
-  <button @click="applyFilter">Apply</button>
+      <button @click="applyFilter">Apply</button>
       <button @click="clearFilter" v-if="metricFilter">Clear</button>
+      <label>
+        Sort by:
+        <select v-model="store.sortBy" @change="applyFilter">
+          <option value="time">Time (newest)</option>
+          <option value="metricName">Metric name (A→Z)</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="defined-metrics">
+      <button class="metrics-toggle" @click="showMetrics = !showMetrics">Defined metrics ({{ store.allMetrics.length }}) ▾</button>
+      <div v-if="showMetrics" class="metrics-popup">
+        <ul v-if="store.allMetrics.length" class="metrics-list">
+          <li v-for="m in store.allMetrics" :key="m.metricId" class="metric-item">
+            <span>{{ m.name }}</span>
+            <button class="delete-metric" title="Delete metric" @click="onDeleteMetric(m.metricId)">Delete</button>
+          </li>
+        </ul>
+        <p v-else class="empty">No metrics defined yet.</p>
+        <p v-if="store.error" class="err">{{ store.error }}</p>
+      </div>
     </div>
 
     <p v-if="store.loading">Loading…</p>
     <p v-if="store.error" class="err">{{ store.error }}</p>
 
     <ul class="list">
-  <li v-for="ci in store.checkIns" :key="ci.checkInId">
+      <li v-for="ci in store.checkIns" :key="ci.checkInId">
         <div class="row">
           <div>
-            <div class="meta">{{ ci.metricName || shorten(ci.metric) || 'metric' }} · {{ formatTime(ci.timestamp, ci.at) }}</div>
+            <div class="meta">{{ ci.metricName || 'metric' }} · {{ formatTime(ci.timestamp, ci.at) }}</div>
             <div class="val">{{ ci.value }}</div>
           </div>
           <div class="actions">
             <button @click="startEdit(ci.checkInId, ci.value)">Edit</button>
+            <button class="danger" @click="remove(ci.checkInId)">Delete</button>
           </div>
         </div>
-        <div v-if="editingId === ci.checkInId" class="edit">
+  <div v-if="editingId === ci.checkInId" class="edit">
           <label class="edit-field">
             Value
             <input type="number" v-model.number="editValue" step="any" />
@@ -42,15 +67,23 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useQuickCheckInsStore } from '../stores/quickCheckIns'
+import { watchEffect } from 'vue'
 
 const store = useQuickCheckInsStore()
+const showMetrics = ref(false)
+async function onDeleteMetric(metricId: string) {
+  await store.deleteMetric(metricId)
+  // Keep the popup open; list will update reactively
+}
+onMounted(() => { store.hydrateAllMetrics().catch(() => {}) })
 
 const metricFilter = ref('')
 const editingId = ref<string | null>(null)
 const editValue = ref<number | null>(null)
 const editAt = ref<string | null>(null)
+// only edit value/time; name is displayed from store
 
 function formatTime(ts?: number, at?: string) {
   const d = ts ? new Date(ts) : (at ? new Date(at) : new Date())
@@ -77,11 +110,13 @@ function startEdit(id: string, value: number) {
   const ci = store.checkIns.find(x => x.checkInId === id)
   const d = ci?.timestamp ? new Date(ci.timestamp) : (ci?.at ? new Date(ci.at) : new Date())
   editAt.value = toInputLocal(d)
+  // no name editing
 }
 function cancelEdit() {
   editingId.value = null
   editValue.value = null
   editAt.value = null
+  // no name editing
 }
 async function saveEdit(id: string) {
   if (editValue.value == null) return
@@ -93,6 +128,24 @@ async function saveEdit(id: string) {
   await store.edit(id, editValue.value, ts)
   cancelEdit()
 }
+
+async function remove(id: string) {
+  await store.deleteCheckIn(id)
+}
+
+async function doDelete(metricId: string) {
+  if (!metricId) return
+  const ok = await store.deleteMetric(metricId)
+  if (ok) await applyFilter()
+}
+
+watchEffect(async () => {
+  // When the user types a filter, attempt to load metrics by that name to populate dropdown
+  const name = metricFilter.value.trim()
+  if (name) {
+    try { await store.loadMetrics(name) } catch {}
+  }
+})
 
 defineExpose({ setMetric })
 
@@ -116,5 +169,19 @@ function toInputLocal(date: Date) {
 .val { font-weight:600; font-size:16px; }
 .edit { margin-top:8px; display:flex; gap:8px; align-items:flex-end; flex-wrap: wrap; }
 .edit-field { display:flex; gap:6px; align-items:center; }
+.rename { margin-top:4px; }
+.rename-row { display:flex; gap:8px; align-items:center; margin-top:4px; }
+.danger { color:#b00020; }
 .err { color: #b00020; }
+</style>
+<style scoped>
+.defined-metrics { position: relative; margin-bottom: 8px; }
+.metrics-toggle { border:1px solid #ddd; background:#fff; padding:6px 10px; border-radius:6px; cursor:pointer; }
+.metrics-popup { position: absolute; z-index: 10; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 8px; margin-top: 6px; width: 260px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.metrics-list { list-style: none; margin: 0; padding: 0; max-height: 200px; overflow: auto; }
+.metrics-list li { padding: 6px 4px; border-bottom: 1px solid #f2f2f2; }
+.metrics-list li:last-child { border-bottom: none; }
+.metric-item { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+.delete-metric { color:#b00020; border:none; background:transparent; cursor:pointer; }
+.empty { color: #666; }
 </style>
