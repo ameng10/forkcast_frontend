@@ -906,15 +906,15 @@
 
 ### POST /api/MealLog/edit
 
-**Description:** Edits an existing meal log entry's details.
+**Description:** Edits an existing meal log entry's details (items, notes) and optionally updates its time.
 
 **Requirements:**
 - `mealId` must correspond to an existing meal owned by `owner`.
-- `newMealData` (a document object) must be provided.
+- Provide any combination of `items`, `notes`, and optional `at` (ISO-8601 string) to update the meal.
 
 **Effects:**
-- The meal document associated with `mealId` is updated with `newMealData`.
-- The structured meal object associated with `mealId` is updated based on `newMealData`.
+- The meal document associated with `mealId` is updated with the provided fields.
+- If `at` is provided, the meal's timestamp is updated to this value.
 
 **Request Body:**
 ```json
@@ -922,7 +922,8 @@
   "callerId": "user:Alice",
   "mealId": "<meal-id>",
   "items": [{...}],
-  "notes": "..."
+  "notes": "...",
+  "at": "2025-10-28T18:45:00.000Z"
 }
 ```
 

@@ -16,7 +16,10 @@
       <div>
   <div class="card">
           <h3>Submit Meal</h3>
-          <label>At (ISO)<input v-model.trim="at" placeholder="2025-10-21T10:00:00.000Z" /></label>
+          <label>
+            At
+            <input type="datetime-local" v-model="atLocal" step="60" />
+          </label>
           <div class="items">
             <h4>Items</h4>
             <div v-for="(it, i) in items" :key="i" class="row">
@@ -36,6 +39,10 @@
         <div class="card">
           <h3>Edit/Delete Meal</h3>
           <label>Meal ID<input v-model.trim="editMealId" placeholder="<meal-id>" ref="editMealIdInput" /></label>
+          <label>
+            At
+            <input type="datetime-local" v-model="editAtLocal" step="60" />
+          </label>
           <div class="items">
             <h4>Items</h4>
             <div v-for="(it, i) in editItems" :key="i" class="row">
@@ -79,7 +86,7 @@
         <div v-if="ml.current" class="card">
           <h3>Selected Meal</h3>
           <div class="kv"><span>Meal ID:</span> <code>{{ ml.current.mealId }}</code></div>
-          <div class="kv"><span>When:</span> <span>{{ (ml.current.at || ml.current.date) ?? '—' }}</span></div>
+          <div class="kv"><span>When:</span> <span>{{ formatAt(ml.current.at || ml.current.date) || '—' }}</span></div>
           <div class="kv"><span>Notes:</span> <span>{{ ml.current.notes ?? '—' }}</span></div>
           <div>
             <h4>Items</h4>
@@ -106,10 +113,10 @@ const ml = useMealLogStore()
 const owner = ref(auth.ownerId ?? '')
 
 // Submit form state
-const at = ref(new Date().toISOString())
+const atLocal = ref(toInputLocalMinute(new Date()))
 const items = ref<MealItem[]>([{ id: 'food:apple', name: 'Apple' }])
 const notes = ref('')
-const canSubmit = computed(() => !!auth.ownerId && !!at.value && items.value.length > 0)
+const canSubmit = computed(() => !!auth.ownerId && !!atLocal.value && items.value.length > 0)
 const submitOk = ref(false)
 
 function addItem() { items.value.push({ id: '', name: '' }) }
@@ -119,7 +126,8 @@ async function submitMeal() {
   submitOk.value = false
   if (!canSubmit.value) return
   try {
-    const id = await ml.submit(at.value, items.value, notes.value || undefined)
+  const atIso = atLocal.value ? new Date(atLocal.value).toISOString() : new Date().toISOString()
+  const id = await ml.submit(atIso, items.value, notes.value || undefined)
     if (id) {
       editMealId.value = id
       submitOk.value = true
@@ -132,7 +140,9 @@ async function submitMeal() {
 const editMealId = ref('')
 const editItems = ref<MealItem[]>([])
 const editNotes = ref('')
+const editAtLocal = ref('')
 const editMealIdInput = ref<HTMLInputElement | null>(null)
+const originalEdit = ref<{ items: MealItem[]; notes: string }>({ items: [], notes: '' })
 function editAddItem() { editItems.value.push({ id: '', name: '' }) }
 function editRemoveItem(i: number) { editItems.value.splice(i, 1) }
 
@@ -143,12 +153,28 @@ async function loadMeal() {
     // best-effort mapping
     editItems.value = (rec.items as MealItem[]) || []
     editNotes.value = (rec.notes as string) || ''
+  const d = rec.at != null
+    ? (typeof rec.at === 'number' ? new Date(rec.at) : new Date(String(rec.at)))
+    : (rec.date != null ? new Date(Number(rec.date)) : null)
+  editAtLocal.value = d ? toInputLocalMinute(d) : ''
+  originalEdit.value = { items: JSON.parse(JSON.stringify(editItems.value)), notes: editNotes.value }
   }
 }
 
 async function performEdit() {
   if (!editMealId.value) return
-  await ml.edit(editMealId.value, editItems.value, editNotes.value || undefined)
+  const atIso = editAtLocal.value ? new Date(editAtLocal.value).toISOString() : undefined
+  // Only send items/notes if changed since last load
+  const itemsChanged = JSON.stringify(editItems.value) !== JSON.stringify(originalEdit.value.items)
+  const notesChanged = (editNotes.value || '') !== (originalEdit.value.notes || '')
+  await ml.edit(
+    editMealId.value,
+    itemsChanged ? editItems.value : undefined,
+    notesChanged ? (editNotes.value || undefined) : undefined,
+    atIso
+  )
+  // After successful edit, reset originals to current
+  originalEdit.value = { items: JSON.parse(JSON.stringify(editItems.value)), notes: editNotes.value }
 }
 
 async function performDelete() {
@@ -193,6 +219,17 @@ function summarizeItems(items?: MealItem[]) {
   if (!items || items.length === 0) return ''
   const names = items.map(i => (i?.name || i?.id || '').toString().trim()).filter(Boolean)
   return names.slice(0, 3).join(', ') + (names.length > 3 ? ` +${names.length - 3}` : '')
+}
+
+function toInputLocalMinute(date: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const y = date.getFullYear()
+  const m = pad(date.getMonth() + 1)
+  const d = pad(date.getDate())
+  const h = pad(date.getHours())
+  const min = pad(date.getMinutes())
+  // No seconds to enforce minute precision
+  return `${y}-${m}-${d}T${h}:${min}`
 }
 </script>
 

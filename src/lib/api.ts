@@ -94,8 +94,94 @@ export const MealLogAPI = {
   submit(payload: { ownerId: string; at: string; items: Array<Record<string, any>>; notes?: string }) {
     return api.post('/MealLog/submit', payload).then(r => r.data as { mealId: string })
   },
-  edit(payload: { callerId: string; mealId: string; items: Array<Record<string, any>>; notes?: string }) {
-    return api.post('/MealLog/edit', payload).then(r => r.data as {})
+  edit(payload: { callerId: string; mealId: string; items?: Array<Record<string, any>>; notes?: string; at?: string }) {
+    // Spec-first with broad time aliases to maximize compatibility
+    const at = (payload as any).at as string | undefined
+    const body: any = {
+      callerId: (payload as any).callerId,
+      ownerId: (payload as any).callerId,
+      owner: (payload as any).callerId,
+      requester: (payload as any).callerId,
+      mealId: payload.mealId,
+      id: payload.mealId,
+      _id: payload.mealId,
+      mealObjectId: payload.mealId,
+      mealDocumentId: payload.mealId
+    }
+    if (payload.items !== undefined) body.items = payload.items
+    if (payload.notes !== undefined) body.notes = payload.notes
+    if (at) {
+      const ts = Date.parse(at)
+      body.at = at
+      if (!Number.isNaN(ts)) {
+        const ms = ts
+        const sec = Math.floor(ms / 1000)
+        // Include common aliases some backends accept
+        Object.assign(body, {
+          date: ms,
+          timestamp: sec,
+          newAt: at,
+          newDate: ms,
+          newTimestamp: sec,
+          when: at,
+          time: at
+        })
+      }
+    }
+    return api.post('/MealLog/edit', body)
+      .then(r => r.data as {})
+      .catch(async (e) => {
+        if ([400, 404, 422].includes(e?.response?.status)) {
+          // Fallback: try minimal then alias variants flipped if primary failed
+          const minimal: any = {
+            callerId: (payload as any).callerId,
+            ownerId: (payload as any).callerId,
+            owner: (payload as any).callerId,
+            requester: (payload as any).callerId,
+            mealId: payload.mealId,
+            id: payload.mealId,
+            _id: payload.mealId,
+            mealObjectId: payload.mealId,
+            mealDocumentId: payload.mealId
+          }
+          if (payload.items !== undefined) minimal.items = payload.items
+          if (payload.notes !== undefined) minimal.notes = payload.notes
+          if (at) minimal.at = at
+          try {
+            const rMin = await api.post('/MealLog/edit', minimal)
+            return rMin.data as {}
+          } catch (e2: any) {
+            if ([400, 404, 422].includes(e2?.response?.status)) {
+              const ts = at ? Date.parse(at) : undefined
+              const alt: any = {
+                callerId: (payload as any).callerId,
+                ownerId: (payload as any).callerId,
+                owner: (payload as any).callerId,
+                requester: (payload as any).callerId,
+                mealId: payload.mealId,
+                id: payload.mealId,
+                _id: payload.mealId,
+                mealObjectId: payload.mealId,
+                mealDocumentId: payload.mealId,
+                ...(payload.items !== undefined ? { items: payload.items } : {}),
+                ...(payload.notes != null ? { notes: payload.notes } : {}),
+                ...(at ? { at } : {}),
+                ...(ts && !Number.isNaN(ts) ? { date: ts, timestamp: Math.floor(ts / 1000), newDate: ts, newTimestamp: Math.floor(ts / 1000), newAt: at, when: at, time: at } : {})
+              }
+              try {
+                const r2 = await api.post('/MealLog/edit', alt)
+                return r2.data as {}
+              } catch (e3: any) {
+                // Final fallback to underscore variant if available
+                const r3 = await api.post('/MealLog/_edit', alt)
+                return r3.data as {}
+              }
+            }
+            throw e2
+          }
+        }
+        throw e
+      })
   },
   delete(payload: { callerId: string; mealId: string }) {
     return api.post('/MealLog/delete', payload).then(r => r.data as {})
@@ -130,12 +216,18 @@ export const MealLogAPI = {
 export const PersonalQAAPI = {
   ingestFact(payload: { owner: string; fact: string }) {
     return api.post('/PersonalQA/ingestFact', payload)
-      .then(r => r.data as { factId: string })
+      .then(r => {
+        const d: any = r.data
+        const id = d?.factId || d?._id || d?.id || d?.key || d?.uuid || d?.docId || d?.documentId || d?.insertedId || d?.upsertedId || d?.result?.id || d?.result?._id || d?.document?._id || d?.document?.id
+        return { factId: id ? String(id) : '' } as { factId: string }
+      })
       .catch(async (e) => {
         if (e?.response?.status === 400 || e?.response?.status === 404) {
           const alt = { requester: (payload as any).owner, fact: payload.fact }
           const r2 = await api.post('/PersonalQA/ingestFact', alt)
-          return r2.data as { factId: string }
+          const d2: any = r2.data
+          const id2 = d2?.factId || d2?._id || d2?.id || d2?.key || d2?.uuid || d2?.docId || d2?.documentId || d2?.insertedId || d2?.upsertedId || d2?.result?.id || d2?.result?._id || d2?.document?._id || d2?.document?.id
+          return { factId: id2 ? String(id2) : '' } as { factId: string }
         }
         throw e
       })
@@ -174,8 +266,19 @@ export const PersonalQAAPI = {
   },
   getUserFacts(payload: { owner: string }) {
     const normalize = (item: any) => {
-      if (item == null) return { factId: '', fact: '' }
-      if (typeof item === 'string') return { factId: item, fact: item }
+  if (item == null) return { factId: '', fact: '' }
+      // If backend returns a bare string, treat it as text unless it looks like an ID
+      if (typeof item === 'string') {
+        const s = item.trim()
+        const isMongo = /^[a-f0-9]{24}$/i.test(s)
+        const isUUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(s)
+        const isULID = /^[0-9A-HJKMNP-TV-Z]{26}$/.test(s)
+        if (isMongo || isUUID || isULID) {
+          return { factId: s, fact: '' }
+        }
+        // Otherwise assume the string is the human-readable fact and also usable as identifier
+        return { factId: s, fact: s }
+      }
       // Collect candidate id/text fields across common shapes
       const idCandidates = [
         item.factId, item._id, item.id, item.key, item.identifier, item.uuid, item.docId, item.documentId,
@@ -183,30 +286,54 @@ export const PersonalQAAPI = {
       ]
       const textCandidates = [
         item.fact, item.text, item.value, item.content, item.statement, item.body, item.note,
-        item.name, item.title, item.message, item.description,
+        item.name, item.title, item.message, item.description, item.label,
         item?.data?.text, item?.data?.fact, item?.payload?.text, item?.payload?.fact,
         item?.document?.fact, item?.document?.text, item?.document?.content
       ]
-      // Strict normalization: if there is no clear text field, leave it blank (do NOT fall back to owner or _id for text)
-      const id = idCandidates.find((v: any) => typeof v === 'string' && v.trim().length > 0)
-      const txt = textCandidates.find((v: any) => typeof v === 'string' && v.trim().length > 0)
-      return { factId: String(id ?? ''), fact: String(txt ?? '') }
+      // ID: accept first non-null candidate and stringify to retain ability to delete problematic records
+      let rawId = idCandidates.find((v: any) => v != null && String(v).trim().length > 0)
+      // Text: prefer clear, non-empty strings only
+      const rawTxt = textCandidates.find((v: any) => typeof v === 'string' && v.trim().length > 0)
+      if (rawId == null && rawTxt != null) rawId = rawTxt // fall back to text as identifier if no id
+      return { factId: rawId != null ? String(rawId) : '', fact: rawTxt != null ? String(rawTxt) : '' }
     }
-    return api.post('/PersonalQA/_getUserFacts', payload)
-      .then(r => {
-        const d = r.data as any
-        const arr = Array.isArray(d) ? d : (d ? [d] : [])
-        return arr.map(normalize) as Array<{ factId: string; fact: string }>
-      })
+    const mapData = (d: any) => {
+      if (Array.isArray(d)) return d
+      if (d && typeof d === 'object') return Object.values(d)
+      return d ? [d] : []
+    }
+    const tryPrimary = async () => {
+      const r = await api.post('/PersonalQA/_getUserFacts', payload)
+      return mapData(r.data).map(normalize)
+    }
+    const tryAlt = async () => {
+      const r = await api.post('/PersonalQA/getUserFacts', payload as any)
+      return mapData(r.data).map(normalize)
+    }
+    const tryGet = async () => {
+      const r = await api.get('/PersonalQA/getUserFacts', { params: payload as any })
+      return mapData(r.data).map(normalize)
+    }
+    return tryPrimary()
       .catch(async (e) => {
+        // Underscore variant failed; try non-underscore or GET variants
         if (e?.response?.status === 400 || e?.response?.status === 404) {
-          const alt = { requester: (payload as any).owner }
-          const r2 = await api.post('/PersonalQA/_getUserFacts', alt)
-          const d2 = r2.data as any
-          const arr2 = Array.isArray(d2) ? d2 : (d2 ? [d2] : [])
-          return arr2.map(normalize) as Array<{ factId: string; fact: string }>
+          try {
+            return await tryAlt()
+          } catch (e2: any) {
+            if (e2?.response?.status === 400 || e2?.response?.status === 404) {
+              return await tryGet()
+            }
+            throw e2
+          }
         }
-        throw e
+        // As a last resort, try underscore with requester alias
+        try {
+          const r2 = await api.post('/PersonalQA/_getUserFacts', { requester: (payload as any).owner })
+          return mapData(r2.data).map(normalize)
+        } catch (e3) {
+          throw e
+        }
       })
   },
   getUserQAs(payload: { owner: string }) {

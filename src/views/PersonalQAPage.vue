@@ -22,11 +22,11 @@
           </div>
           <div class="row" style="justify-content: space-between;">
             <span>{{ pqa.facts.length }} fact(s)</span>
-            <button @click="pqa.refreshFacts" :disabled="pqa.loading">{{ pqa.loading ? 'Loading…' : 'Refresh Facts' }}</button>
+            <!-- Refresh Facts button removed per request -->
           </div>
           <ul class="facts">
             <li v-for="f in pqa.facts" :key="f.factId || Math.random().toString(36).slice(2)" class="fact-row">
-              <div class="body">{{ f.fact || '(no text)' }}</div>
+              <div class="body">{{ f.fact }}</div>
               <div class="actions"><button @click="removeFact(f.factId)" :disabled="pqa.loading || !f.factId">Forget</button></div>
             </li>
           </ul>
@@ -38,7 +38,7 @@
           <h3>Ask a question</h3>
           <div class="row">
             <input v-model.trim="question" placeholder="What meals helped energy?" />
-            <button @click="ask" :disabled="!question || pqa.loading">{{ pqa.loading ? 'Asking…' : 'Ask' }}</button>
+            <button @click="ask" :disabled="!question || pqa.asking">{{ pqa.asking ? 'Asking…' : 'Ask' }}</button>
           </div>
           <p v-if="lastAnswer"><strong>Answer:</strong> {{ lastAnswer }}</p>
           <h4>History</h4>
@@ -48,7 +48,7 @@
               <div class="a">A: {{ qa.answer }}</div>
             </li>
           </ul>
-          <button @click="pqa.refreshQAs" :disabled="pqa.loading">Refresh History</button>
+          <button @click="pqa.resetChat" :disabled="pqa.loading">Reset History</button>
           <p v-if="pqa.error" class="err">{{ pqa.error }}</p>
         </div>
       </div>
@@ -75,7 +75,6 @@ watch(newFact, (v) => { canAddFact.value = !!v && v.length > 0 })
 function saveOwner() {
   auth.setSession(owner.value)
   pqa.refreshFacts()
-  pqa.refreshQAs()
 }
 function clearOwner() {
   auth.clear()
@@ -97,7 +96,7 @@ async function ask() {
 }
 
 watch(() => auth.ownerId, (id) => {
-  if (id) { pqa.refreshFacts(); pqa.refreshQAs() }
+  if (id) { pqa.resetChat(); pqa.refreshFacts() }
 }, { immediate: true })
 </script>
 

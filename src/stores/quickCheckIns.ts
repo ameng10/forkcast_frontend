@@ -11,9 +11,32 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
     checkIns: [] as CheckIn[],
     loading: false,
     error: null as string | null,
-    selectedMetricId: null as string | null
+    selectedMetricId: null as string | null,
+    pendingTimes: {} as Record<string, number>,
+    timeOverrides: ((): Record<string, number> => {
+      try {
+        const raw = localStorage.getItem('qc_timeOverrides')
+        const obj = raw ? JSON.parse(raw) : {}
+        if (obj && typeof obj === 'object') return obj
+      } catch {}
+      return {}
+    })()
   }),
   actions: {
+    saveOverrides() {
+      try { localStorage.setItem('qc_timeOverrides', JSON.stringify(this.timeOverrides)) } catch {}
+    },
+    normalizeCheckInTime(obj: any): number | undefined {
+      if (!obj) return undefined
+      // precedence: at (iso) or timestamp in ms/seconds
+      if (typeof obj.at === 'string') {
+        const p = Date.parse(obj.at); if (!Number.isNaN(p)) return p
+      }
+      const num = (v: any) => (v == null ? undefined : Number(v))
+      const cand = num(obj.timestamp) ?? num(obj.ts) ?? num(obj.date)
+      if (cand != null) return cand < 1e12 ? cand * 1000 : cand
+      return undefined
+    },
     async loadMetrics(name: string) {
       this.loading = true
       this.error = null
@@ -64,19 +87,16 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
           for (const m of arr) if (m.metricId) nameMap.set(m.metricId, m.name)
         }
         const norm = (list || []).map((ci: any) => {
-          // Normalize timestamp: consider timestamp/ts/date (seconds or ms) and at (ISO)
-          let ts: number | undefined = undefined
-          const num = (v: any) => (v == null ? undefined : Number(v))
-          let cand = num(ci.timestamp) ?? num(ci.ts) ?? num(ci.date)
-          if (cand != null) {
-            ts = cand < 1e12 ? cand * 1000 : cand
-          } else if (ci.at) {
-            const p = Date.parse(ci.at)
-            ts = Number.isNaN(p) ? undefined : p
-          }
+          let ts = this.normalizeCheckInTime(ci)
+          const id = ci.checkInId || ci._id || ci.id
+          // Apply pending/overrides for stability
+          const p = this.pendingTimes[id]
+          if (typeof p === 'number') ts = p
+          const ov = this.timeOverrides[id]
+          if (typeof ov === 'number') ts = ov
           const atIso = ts ? new Date(ts).toISOString() : (ci.at || undefined)
           return {
-            checkInId: ci.checkInId || ci._id || ci.id,
+            checkInId: id,
             metric: ci.metric,
             metricName: ci.metricName || (ci.metric ? nameMap.get(ci.metric) : undefined),
             value: ci.value,
@@ -139,8 +159,22 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
       this.loading = true
       this.error = null
       try {
+        // Optimistic/persistent update
+        if (newTimestamp != null && !Number.isNaN(newTimestamp)) {
+          this.pendingTimes[checkInId] = newTimestamp
+          this.timeOverrides[checkInId] = newTimestamp
+          this.saveOverrides()
+        }
+        // Update in-memory list immediately
+        const idx = this.checkIns.findIndex(ci => ci.checkInId === checkInId)
+        if (idx >= 0) {
+          const ci = this.checkIns[idx]
+          const ts = newTimestamp ?? ci.timestamp
+          this.checkIns[idx] = { ...ci, value: newValue, timestamp: ts, at: ts ? new Date(ts).toISOString() : ci.at }
+          this.checkIns = [...this.checkIns].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+        }
         await QuickCheckInsAPI.edit({ owner: auth.ownerId, checkInId, newValue, newTimestamp })
-        // Refresh list with current selection
+        // Final refresh will keep overrides applied to avoid snap-back
         await this.listCheckIns({ metricId: this.selectedMetricId || undefined })
     return true
       } catch (e: any) {
