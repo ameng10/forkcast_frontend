@@ -60,7 +60,7 @@ export const usePersonalQAStore = defineStore('personalQA', {
     },
 
     // Web summary (lightweight) for fallback context
-  async fetchWikipediaSummary(topic: string): Promise<string | null> {
+    async fetchWikipediaSummary(topic: string): Promise<string | null> {
       const raw = (topic || '').trim()
       const variants: string[] = []
       if (raw) variants.push(raw)
@@ -125,6 +125,40 @@ export const usePersonalQAStore = defineStore('personalQA', {
         // Ignore fetch errors and fall through to default messaging
       }
       return `${lead}I couldn't retrieve a quick public summary right now. Please consult a trusted health source or a medical professional for more detail.`.trim()
+    },
+
+    wordCount(s: string): number {
+      const txt = (s || '').trim()
+      if (!txt) return 0
+      const parts = txt.split(/\s+/g)
+      return parts.filter(Boolean).length
+    },
+
+    shouldRequestWeb(draft: any): boolean {
+      if (!draft || typeof draft !== 'object') return false
+      const rawFlag = (draft.needs_web ?? draft.needsWeb ?? draft.requires_web ?? draft.requiresWeb) as unknown
+      if (typeof rawFlag === 'boolean') return rawFlag
+      if (typeof rawFlag === 'string') {
+        const lowered = rawFlag.toLowerCase()
+        if (['true', 'yes', 'y', '1'].includes(lowered)) return true
+        if (['false', 'no', 'n', '0'].includes(lowered)) return false
+      }
+      const answer = typeof draft.answer === 'string' ? draft.answer.toLowerCase() : ''
+      return /out of scope|insufficient|not enough|need (?:more|additional) data|no relevant personal/i.test(answer)
+    },
+
+    async summarizeAnswer(requester: string, answer: string): Promise<string> {
+      const prompt = `Summarize the following response for the user in no more than 3 sentences and 90 words. Return STRICT JSON of the form {"summary":"..."}.\nResponse: ${answer}`
+      try {
+        const { parsed, raw } = await askLLMJson<any>(requester, prompt)
+        const data = parsed && typeof parsed === 'object' ? parsed : this.safeParseJSON(raw)
+        if (data && typeof data.summary === 'string' && data.summary.trim()) {
+          return this.limitWords(data.summary.trim(), 90)
+        }
+      } catch {
+        // Fall back to local truncation below
+      }
+      return this.limitWords(answer, 90)
     },
 
   // Optional: normalized recent meals (kept for endpoints correctness; not used in ask flow)
@@ -343,10 +377,10 @@ export const usePersonalQAStore = defineStore('personalQA', {
 
       const prompt = [
         'You are Gemini, a friendly health assistant answering the user as a chatbot.',
-        'You must return STRICT JSON in the form {"answer":"...","citations":["id1","id2"],"confidence":0.0}.',
-        'Use the provided personal context (facts, meals, check-ins) to answer when possible.',
+        'You must return STRICT JSON in the form {"answer":"...","citations":["id1","id2"],"confidence":0.0,"needs_web":false}.',
+        'Rely on the provided personal context (facts, meals, check-ins) whenever possible.',
         'Cite only IDs exactly as they appear below. Keep the answer to 120 words or fewer and write a single paragraph.',
-        'If the context lacks enough detail, briefly say so, cite the closest item, and keep confidence at or below 0.5.',
+        'If the personal context is insufficient to answer, set "needs_web" to true, explain briefly why in the answer, keep confidence ≤ 0.5, and do not invent external facts.',
         'Question: {{question}}',
         'Facts (id: text):',
         '{{facts}}',
@@ -371,14 +405,16 @@ export const usePersonalQAStore = defineStore('personalQA', {
             return { text: fallback, backendIssue: false }
           }
           const rawAnswer = String(result.answer ?? '').replace(/\s+/g, ' ').trim()
-          const trimmedAnswer = this.limitWords(rawAnswer, 120)
-          const confidence = typeof result.confidence === 'number' ? result.confidence : 0
-          const answerLower = trimmedAnswer.toLowerCase()
-          const lowConfidence = !Number.isFinite(confidence) || confidence < 0.55 || /insufficient|not enough|out of scope/.test(answerLower)
-          if (lowConfidence) {
-            const fallback = await this.buildWebParagraph(q, 'I checked your meals, check-ins, and facts but could not make a confident personal call yet.')
+          let trimmedAnswer = this.limitWords(rawAnswer, 140)
+          if (this.wordCount(trimmedAnswer) > 120) {
+            trimmedAnswer = await this.summarizeAnswer(requester, trimmedAnswer)
+          }
+
+          if (this.shouldRequestWeb(result)) {
+            const fallback = await this.buildWebParagraph(q, trimmedAnswer || 'I checked your personal data but need outside sources to respond usefully.')
             return { text: fallback, backendIssue: false }
           }
+
           return { text: trimmedAnswer, backendIssue: false }
         } catch (err) {
           throw err
