@@ -50,23 +50,67 @@ export const QuickCheckInsAPI = {
     })
   },
   edit(payload: { owner: string; checkInId: string; newValue: number; newTimestamp?: number }) {
-    // Spec-first: { owner, checkInId, newValue, newTimestamp? }
+    const owner = payload.owner
+    const id = payload.checkInId
     const tsMs = payload.newTimestamp
     const tsSec = tsMs != null ? Math.floor(tsMs / 1000) : undefined
     const atIso = tsMs != null ? new Date(tsMs).toISOString() : undefined
-    const specBody: any = {
-      owner: (payload as any).owner,
-      checkInId: payload.checkInId,
-      newValue: payload.newValue,
-      ...(tsSec != null ? { newTimestamp: tsSec } : {}),
-      ...(tsSec != null ? { timestamp: tsSec } : {}),
-      // Provide ISO too to help backends that accept `at`
-      ...(atIso ? { at: atIso } : {}),
-      // Also include alternate shape proactively for compatibility
-      checkIn: payload.checkInId,
-      value: payload.newValue
+    const base: any = {
+      owner,
+      ownerId: owner,
+      requester: owner,
+      user: owner,
+      uid: owner,
+      checkInId: id,
+      checkIn: id,
+      id,
+      value: payload.newValue,
+      newValue: payload.newValue
     }
-    return api.post('/QuickCheckIns/edit', specBody).then(r => r.data as {})
+    if (tsMs != null) {
+      Object.assign(base, {
+        newTimestamp: tsSec,
+        timestamp: tsSec,
+        newTimestampSeconds: tsSec,
+        timestampSeconds: tsSec,
+        newTimestampMs: tsMs,
+        timestampMs: tsMs,
+        newDate: tsMs,
+        date: tsMs,
+        newTime: tsMs,
+        time: tsMs,
+        newWhen: atIso,
+        when: atIso,
+        newAt: atIso,
+        at: atIso,
+        updatedAt: atIso,
+        ts: tsSec,
+        tsMs,
+        new_ts: tsSec
+      })
+    }
+    const endpoints = [
+      '/QuickCheckIns/edit',
+      '/QuickCheckIns/_edit',
+      '/QuickCheckIns/update',
+      '/QuickCheckIns/_update',
+      '/QuickCheckIns/editCheckIn',
+      '/QuickCheckIns/_editCheckIn'
+    ]
+  const run = async (): Promise<{}> => {
+      let lastErr: any
+      for (const url of endpoints) {
+        try {
+          const res = await api.post(url, base)
+      return (res.data as any) ?? {}
+        } catch (err: any) {
+          lastErr = err
+          if (![400, 404, 422].includes(err?.response?.status)) throw err
+        }
+      }
+      throw lastErr
+    }
+    return run()
   },
   getCheckIn(payload: { checkInId: string }) {
     return api.post('/QuickCheckIns/_getCheckIn', payload).then(r => r.data as Array<{ checkInId: string; owner: string; metricName: string; value: number; timestamp: number }>)
@@ -127,14 +171,115 @@ export const QuickCheckInsAPI = {
     }
     return run()
   },
-  // Allow filtering by metric ID; send both metricId and metric for compatibility
+  // Allow filtering by metric ID; try multiple endpoints and include time range aliases for compatibility
   listByOwner(payload: { owner: string; metricId?: string; metric?: string; startDate?: number; endDate?: number }) {
-    const body: any = { owner: payload.owner }
-  if (payload.metricId) { body.metricId = payload.metricId; body.metric = payload.metricId }
-    if (payload.metric && !payload.metricId) body.metric = payload.metric
-    if (payload.startDate) body.startDate = payload.startDate
-    if (payload.endDate) body.endDate = payload.endDate
-    return api.post('/QuickCheckIns/_listCheckInsByOwner', body).then(r => r.data as any[])
+    const { owner, metricId, metric } = payload
+    const start = payload.startDate
+    const end = payload.endDate
+    // Build a comprehensive body with common aliases some backends expect
+    const body: any = {
+      owner,
+      ownerId: owner,
+      user: owner,
+      uid: owner,
+      requester: owner,
+      // Metric identifiers
+      ...(metricId ? { metricId, metric: metricId, id: metricId } : {}),
+      ...(!metricId && metric ? { metric } : {})
+    }
+    if (start != null) {
+      const ms = start
+      const sec = Math.floor(ms / 1000)
+      Object.assign(body, {
+        startDate: ms,
+        endDate: end ?? undefined,
+        // common aliases
+        start: ms,
+        end: end ?? undefined,
+        startAt: ms,
+        endAt: end ?? undefined,
+        startTime: ms,
+        endTime: end ?? undefined,
+        from: ms,
+        to: end ?? undefined,
+        rangeStart: ms,
+        rangeEnd: end ?? undefined,
+        // seconds variants
+        startSeconds: sec,
+        endSeconds: end != null ? Math.floor(end / 1000) : undefined
+      })
+    }
+    // Endpoint candidates to maximize compatibility
+    const endpoints = [
+      '/QuickCheckIns/_listCheckInsByOwner',
+      '/QuickCheckIns/listCheckInsByOwner',
+      '/QuickCheckIns/getCheckInsByOwner',
+      '/QuickCheckIns/listByOwner',
+      '/QuickCheckIns/_listByOwner',
+      '/QuickCheckIns/list',
+      '/QuickCheckIns/_list'
+    ]
+    const normalizeList = (d: any): any[] => {
+      if (Array.isArray(d)) return d
+      if (!d) return []
+      // Unwrap common containers
+      const containers = [
+        'data','items','list','results','records','rows','checkIns','checkins','entries'
+      ]
+      for (const key of containers) {
+        const v = d?.[key]
+        if (Array.isArray(v)) return v
+      }
+      // If object contains numeric keys (array-like), use values
+      if (typeof d === 'object') {
+        const vals = Object.values(d)
+        if (vals.every(x => typeof x === 'object')) return vals as any[]
+      }
+      return [d]
+    }
+    const run = async () => {
+      let lastErr: any
+      for (const url of endpoints) {
+        try {
+          const r = await api.post(url, body)
+          const d = r.data as any
+          const arr = normalizeList(d)
+          return arr as any[]
+        } catch (err: any) {
+          lastErr = err
+          // If it's not a contract error, surface it
+          if (![400, 404, 422].includes(err?.response?.status)) throw err
+        }
+      }
+      // Final attempts: try GET with query params for some backends
+      try {
+        const params: any = { owner, ownerId: owner, user: owner, uid: owner }
+        if (metricId) params.metricId = metricId
+        if (!metricId && metric) params.metric = metric
+        if (start != null) {
+          params.startDate = start
+          if (end != null) params.endDate = end
+        }
+        const candidates = [
+          '/QuickCheckIns/listByOwner',
+          '/QuickCheckIns/_listCheckInsByOwner',
+          '/QuickCheckIns/listCheckInsByOwner'
+        ]
+    for (const url of candidates) {
+          try {
+            const rGet = await api.get(url, { params })
+            const d = rGet.data as any
+      return normalizeList(d)
+          } catch (err2: any) {
+            if (![400,404,422].includes(err2?.response?.status)) throw err2
+          }
+        }
+        throw lastErr
+      } catch (err) {
+        throw lastErr
+      }
+    }
+    return run()
   }
   ,
   // List all metrics for an owner (used to map names/units)
@@ -306,28 +451,47 @@ export const MealLogAPI = {
 
 // PersonalQA API helpers
 export const PersonalQAAPI = {
-  ingestFact(payload: { owner: string; fact: string }) {
-    return api.post('/PersonalQA/ingestFact', payload)
-      .then(r => {
-        const d: any = r.data
-        const id = d?.factId || d?._id || d?.id || d?.key || d?.uuid || d?.docId || d?.documentId || d?.insertedId || d?.upsertedId || d?.result?.id || d?.result?._id || d?.document?._id || d?.document?.id
-        return { factId: id ? String(id) : '' } as { factId: string }
-      })
-      .catch(async (e) => {
-        if (e?.response?.status === 400 || e?.response?.status === 404) {
-          const alt = { requester: (payload as any).owner, fact: payload.fact }
-          const r2 = await api.post('/PersonalQA/ingestFact', alt)
-          const d2: any = r2.data
-          const id2 = d2?.factId || d2?._id || d2?.id || d2?.key || d2?.uuid || d2?.docId || d2?.documentId || d2?.insertedId || d2?.upsertedId || d2?.result?.id || d2?.result?._id || d2?.document?._id || d2?.document?.id
-          return { factId: id2 ? String(id2) : '' } as { factId: string }
+  ingestFact(payload: { owner: string; fact: string; source?: string; at?: string }) {
+    const trimmed = (payload.fact || '').trim()
+    // Map arbitrary source to backend enum values; default to 'insight' to avoid tying to meals/check-ins
+    const rawSrc = (payload.source || '').toLowerCase().trim()
+    const source = ['meal','check_in','insight','behavior'].includes(rawSrc) ? rawSrc : 'insight'
+    // Prefer ISO-8601 string; server may coerce to Date
+    const at = (payload.at && payload.at.trim()) || new Date().toISOString()
+    // Backend expects { owner, at, content, source }
+    const variants: Array<Record<string, any>> = [
+      { owner: payload.owner, at, content: trimmed, source },
+      // Fallbacks in case router expects alternate keys
+      { requester: payload.owner, owner: payload.owner, at, content: trimmed, source },
+      { owner: payload.owner, at, fact: trimmed, source },
+      { requester: payload.owner, at, fact: trimmed, source }
+    ]
+    const run = async (): Promise<{ factId: string }> => {
+      let lastErr: any
+      for (const body of variants) {
+        try {
+          const res = await api.post('/PersonalQA/ingestFact', body)
+          const d: any = res.data
+          const id = d?.fact || d?.factId || d?._id || d?.id || d?.key || d?.uuid || d?.docId || d?.documentId || d?.insertedId || d?.upsertedId || d?.result?.id || d?.result?._id || d?.document?._id || d?.document?.id
+          return { factId: id ? String(id) : '' }
+        } catch (err: any) {
+          lastErr = err
+          if (![400, 404, 422].includes(err?.response?.status)) throw err
         }
-        throw e
-      })
+      }
+      throw lastErr
+    }
+    return run()
   },
   forgetFact(payload: { owner: string; factId: string }) {
     // Try a few payload variants for broader backend compatibility
     const attempts: Array<Record<string, any>> = [
-      // Primary
+      // Primary (backend requires requester = owner)
+      { requester: (payload as any).owner, owner: (payload as any).owner, factId: payload.factId },
+      // Owner with alternate id keys
+      { requester: (payload as any).owner, owner: (payload as any).owner, id: payload.factId },
+      { requester: (payload as any).owner, owner: (payload as any).owner, fact: payload.factId },
+      // Legacy shapes
       { owner: (payload as any).owner, factId: payload.factId },
       // Owner with alternate id keys
       { owner: (payload as any).owner, id: payload.factId },
@@ -347,6 +511,14 @@ export const PersonalQAAPI = {
           lastErr = err
           // Try next variant only for typical contract errors
           if (![400, 404, 422].includes(err?.response?.status)) throw err
+          // Try underscore variant for the same body before moving on
+          try {
+            const r2 = await api.post('/PersonalQA/_forgetFact', body)
+            return r2.data as {}
+          } catch (e2: any) {
+            // if still schema-ish, continue; otherwise surface
+            if (![400,404,422].includes(e2?.response?.status)) throw e2
+          }
         }
       }
       throw lastErr
@@ -354,7 +526,60 @@ export const PersonalQAAPI = {
     return run()
   },
   ask(payload: { requester: string; question: string }) {
-    return api.post('/PersonalQA/ask', payload).then(r => r.data as { answer: string })
+    // Match docs exactly: only requester and question
+    const body = {
+      requester: payload.requester,
+      question: (payload.question || '').trim()
+    }
+    const run = async () => {
+      // Prefer underscore variant first in case primary path aggregates other sources server-side
+      try {
+        const r2 = await api.post('/PersonalQA/_ask', body)
+        return r2.data as { answer: string }
+      } catch (eUnderscore: any) {
+        if (![400,404,422,500].includes(eUnderscore?.response?.status)) throw eUnderscore
+        // Fallback to primary
+        const r = await api.post('/PersonalQA/ask', body)
+        return r.data as { answer: string }
+      }
+    }
+    return run()
+  },
+  askLLM(payload: { requester: string; question: string; k?: number; model?: string }) {
+    const body: any = {
+      requester: payload.requester,
+      question: (payload.question || '').trim()
+    }
+    if (payload.k != null) body.k = payload.k
+    if (payload.model) body.model = payload.model
+    const endpoints = [
+      '/PersonalQA/askLLM',
+      '/PersonalQA/_askLLM',
+      '/PersonalQA/ask-llm',
+      '/PersonalQA/_ask-llm',
+      '/PersonalQA/askLlm',
+      '/PersonalQA/AskLLM',
+      '/PersonalQA/ask_llm'
+    ]
+    const run = async () => {
+      let lastErr: any
+      for (const url of endpoints) {
+        try {
+          const r = await api.post(url, body)
+          return r.data as { answer: string; citedFacts?: string[]; confidence?: number }
+        } catch (e: any) {
+          lastErr = e
+          if (![400,404,422,500].includes(e?.response?.status)) throw e
+        }
+      }
+      // Surface a descriptive error instead of falling back to rule-based ask
+      const code = lastErr?.response?.status
+      if (code === 404) {
+        throw new Error('PersonalQA.askLLM endpoint not found (404). Please enable askLLM on the server.')
+      }
+      throw lastErr
+    }
+    return run()
   },
   getUserFacts(payload: { owner: string }) {
     const normalize = (item: any) => {
@@ -377,17 +602,42 @@ export const PersonalQAAPI = {
         item?.document?._id, item?.document?.id
       ]
       const textCandidates = [
-        item.fact, item.text, item.value, item.content, item.statement, item.body, item.note,
+  item.fact, item.text, item.value, item.content, item.statement, item.body, item.note,
         item.name, item.title, item.message, item.description, item.label,
         item?.data?.text, item?.data?.fact, item?.payload?.text, item?.payload?.fact,
-        item?.document?.fact, item?.document?.text, item?.document?.content
+  item?.document?.fact, item?.document?.text, item?.document?.content
+      ]
+      const sourceCandidates = [
+  item.source, item.factSource, item.type, item.category,
+        item?.data?.source, item?.payload?.source, item?.document?.source
+      ]
+      const timeCandidates = [
+  item.at, item.time, item.timestamp, item.ts, item.date, item.when,
+        item?.data?.at, item?.payload?.at, item?.document?.at,
+        item?.createdAt, item?.updatedAt
       ]
       // ID: accept first non-null candidate and stringify to retain ability to delete problematic records
       let rawId = idCandidates.find((v: any) => v != null && String(v).trim().length > 0)
       // Text: prefer clear, non-empty strings only
       const rawTxt = textCandidates.find((v: any) => typeof v === 'string' && v.trim().length > 0)
       if (rawId == null && rawTxt != null) rawId = rawTxt // fall back to text as identifier if no id
-      return { factId: rawId != null ? String(rawId) : '', fact: rawTxt != null ? String(rawTxt) : '' }
+      const sourceTxt = sourceCandidates.find((v: any) => typeof v === 'string' && v.trim().length > 0)
+      const rawTime = timeCandidates.find((v: any) => typeof v === 'string' && v.trim().length > 0)
+      let atIso: string | undefined
+      if (typeof rawTime === 'string' && rawTime.trim()) {
+        // Prefer preserving ISO strings; attempt to normalize recognizable formats
+        const parsed = Date.parse(rawTime)
+        atIso = Number.isFinite(parsed) ? new Date(parsed).toISOString() : rawTime
+      } else if (typeof rawTime === 'number') {
+        const ms = rawTime < 1e12 ? rawTime * 1000 : rawTime
+        atIso = new Date(ms).toISOString()
+      }
+      return {
+        factId: rawId != null ? String(rawId) : '',
+        fact: rawTxt != null ? String(rawTxt) : '',
+        source: sourceTxt ? String(sourceTxt) : undefined,
+        at: atIso
+      }
     }
     const mapData = (d: any) => {
       if (Array.isArray(d)) return d
@@ -396,15 +646,15 @@ export const PersonalQAAPI = {
     }
     const tryPrimary = async () => {
       const r = await api.post('/PersonalQA/_getUserFacts', payload)
-      return mapData(r.data).map(normalize)
+      return mapData(r.data).map(normalize) as Array<{ factId: string; fact: string; source?: string; at?: string }>
     }
     const tryAlt = async () => {
       const r = await api.post('/PersonalQA/getUserFacts', payload as any)
-      return mapData(r.data).map(normalize)
+      return mapData(r.data).map(normalize) as Array<{ factId: string; fact: string; source?: string; at?: string }>
     }
     const tryGet = async () => {
       const r = await api.get('/PersonalQA/getUserFacts', { params: payload as any })
-      return mapData(r.data).map(normalize)
+      return mapData(r.data).map(normalize) as Array<{ factId: string; fact: string; source?: string; at?: string }>
     }
     return tryPrimary()
       .catch(async (e) => {
@@ -422,7 +672,7 @@ export const PersonalQAAPI = {
         // As a last resort, try underscore with requester alias
         try {
           const r2 = await api.post('/PersonalQA/_getUserFacts', { requester: (payload as any).owner })
-          return mapData(r2.data).map(normalize)
+          return mapData(r2.data).map(normalize) as Array<{ factId: string; fact: string; source?: string; at?: string }>
         } catch (e3) {
           throw e
         }
@@ -451,5 +701,48 @@ export const PersonalQAAPI = {
         }
         throw e
       })
+  }
+}
+
+// InsightMining API helpers
+export const InsightMiningAPI = {
+  ingest(payload: { owner: string; observation: string }) {
+    return api.post('/InsightMining/ingest', payload).then(r => {
+      const d: any = r.data
+      const id = d?.observationId || d?._id || d?.id || d?.key || d?.uuid
+      return { observationId: id ? String(id) : '' } as { observationId: string }
+    })
+  },
+  analyze(payload: { owner: string }) {
+    return api.post('/InsightMining/analyze', payload).then(r => r.data as { insightIds?: string[] })
+  },
+  summarize(payload: { owner: string }) {
+    // Try primary, then underscore variants
+    const run = async () => {
+      try {
+        const r = await api.post('/InsightMining/summarize', payload)
+        return r.data as { report?: string }
+      } catch (e: any) {
+        if ([400,404,422].includes(e?.response?.status)) {
+          try { const r2 = await api.post('/InsightMining/_summarize', payload); return r2.data as { report?: string } } catch {}
+        }
+        throw e
+      }
+    }
+    return run()
+  },
+  getObservationsForUser(payload: { owner: string }) {
+    return api.post('/InsightMining/_getObservationsForUser', payload).then(r => r.data as Array<{ observationId: string; observation: string }>)
+  },
+  getInsightsForUser(payload: { owner: string }) {
+    return api.post('/InsightMining/_getInsightsForUser', payload).then(r => r.data as Array<{ insightId: string; insight: string }>)
+  },
+  getReport(payload: { owner: string }) {
+    return api.post('/InsightMining/_getReport', payload).then(r => {
+      const d: any = r.data
+      const arr = Array.isArray(d) ? d : (d ? [d] : [])
+      const rep = arr.find((x: any) => typeof x?.report === 'string')?.report || ''
+      return { report: rep } as { report: string }
+    })
   }
 }
