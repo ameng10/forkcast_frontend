@@ -64,9 +64,17 @@ body, html, #app {
   z-index: 0;
   top: 0; left: 0; right: 0; bottom: 0;
   pointer-events: none;
-  background: url('data:image/svg+xml;utf8,<svg width="900" height="900" viewBox="0 0 900 900" fill="none" xmlns="http://www.w3.org/2000/svg"><g opacity="0.08"><ellipse cx="200" cy="200" rx="180" ry="120" fill="%2338A700"/><rect x="600" y="100" width="180" height="180" rx="90" fill="%23FF8200"/><path d="M700 700c0-49.7 40.3-90 90-90v180c-49.7 0-90-40.3-90-90z" fill="%23B80C09"/><path d="M300 700c0-66.3 53.7-120 120-120s120 53.7 120 120" stroke="%23294936" stroke-width="24" stroke-linecap="round"/><g><circle cx="700" cy="700" r="60" fill="%2338A700"/><rect x="120" y="600" width="120" height="30" rx="15" fill="%23B80C09"/><rect x="160" y="640" width="40" height="120" rx="20" fill="%23FF8200"/></g><g><rect x="400" y="100" width="40" height="120" rx="20" fill="%23B80C09"/><rect x="420" y="180" width="80" height="30" rx="15" fill="%23FF8200"/></g></g></svg>') no-repeat left 0 top 0, url('data:image/svg+xml;utf8,<svg width="700" height="700" viewBox="0 0 700 700" fill="none" xmlns="http://www.w3.org/2000/svg"><g opacity="0.08"><ellipse cx="500" cy="600" rx="120" ry="60" fill="%23FF8200"/><rect x="100" y="500" width="120" height="30" rx="15" fill="%2338A700"/><rect x="140" y="540" width="40" height="120" rx="20" fill="%23B80C09"/><circle cx="200" cy="200" r="60" fill="%23B80C09"/><rect x="400" y="100" width="40" height="120" rx="20" fill="%2338A700"/><rect x="420" y="180" width="80" height="30" rx="15" fill="%23FF8200"/></g></svg>') no-repeat right 0 bottom 0;
-  background-size: 600px, 400px;
-  opacity: 1;
+  background:
+    url('/forkcast-logo.png') no-repeat center 20vh,
+    url('/fork.png') no-repeat left 5vh bottom 10vh,
+    url('/apple.png') no-repeat right 10vw top 15vh,
+    url('/carrot.png') no-repeat right 5vw bottom 5vh;
+  background-size:
+    500px,
+    180px,
+    140px,
+    160px;
+  opacity: 0.10;
 }
 .app-header { display:flex; align-items:center; gap:16px; padding:12px 16px; border-bottom: 1px solid var(--border); background: var(--surface); position: sticky; top: 0; z-index: 10; }
 .app-header h1 { font-size: 18px; margin: 0; color: var(--text); font-family: 'Fredoka', 'Nunito', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; font-weight: 600; letter-spacing: 0.2px; }
