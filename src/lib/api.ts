@@ -140,7 +140,13 @@ export const QuickCheckInsAPI = {
   },
   deleteMetric(payload: { metricId: string; owner?: string }) {
     const base: any = { metricId: payload.metricId, metric: payload.metricId, id: payload.metricId }
-    if (payload.owner) base.owner = payload.owner
+    if (payload.owner) {
+      base.owner = payload.owner
+      base.requester = payload.owner
+      base.ownerId = payload.owner
+      base.user = payload.owner
+      base.uid = payload.owner
+    }
     const tryList = [
       ['/QuickCheckIns/deleteMetric', base],
       ['/QuickCheckIns/_deleteMetric', base],
@@ -161,7 +167,7 @@ export const QuickCheckInsAPI = {
           lastErr = err
           const code = err?.response?.status
           if (code === 404) {
-            // Treat not-found as already-deleted success
+            // Treat not-found as already-deleted success in owner scope
             return {}
           }
           if (![400,404,422].includes(code)) throw err
@@ -274,9 +280,14 @@ export const QuickCheckInsAPI = {
             if (![400,404,422].includes(err2?.response?.status)) throw err2
           }
         }
-        throw lastErr
+  // If every attempt resulted in a 404, treat as no data
+  const code = lastErr?.response?.status
+  if (code === 404) return []
+  throw lastErr
       } catch (err) {
-        throw lastErr
+  const code = lastErr?.response?.status
+  if (code === 404) return []
+  throw lastErr
       }
     }
     return run()

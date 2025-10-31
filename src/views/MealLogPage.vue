@@ -4,16 +4,17 @@
 
     <div class="auth-box">
       <label>
-        Owner ID
-  <input v-model.trim="owner" placeholder="Alice or user:Alice" />
+        User:
+        <input v-model.trim="owner" placeholder="e.g. alice" />
       </label>
-      <button @click="saveOwner" :disabled="!owner">Use Owner</button>
-      <button @click="clearOwner" v-if="auth.ownerId">Clear</button>
-      <p v-if="auth.ownerId">Active owner: <strong>{{ auth.ownerId }}</strong></p>
+  <button @click="saveOwner" :disabled="!owner" style="margin-left:16px;">Use User</button>
+  <button @click="clearOwner" v-if="auth.ownerId" style="margin-left:16px;">Clear</button>
+      <p v-if="auth.ownerId">Active User: <strong>{{ ownerLabel }}</strong></p>
     </div>
 
-  <div class="grid">
-      <div>
+    <div class="grid grid-3">
+      <!-- Left: Submit Meal -->
+      <div class="col">
         <div class="card">
           <h3>Submit Meal</h3>
           <label>
@@ -30,8 +31,8 @@
               Date
               <input type="date" v-model="dateLocal" />
             </label>
-            <label>
-              Time
+            <label class="time-field">
+              <span class="field-label">Time</span>
               <div class="time-with-ampm">
                 <input type="time" v-model="timeLocal" step="60" />
                 <div class="ampm">
@@ -45,62 +46,20 @@
             <h4>Foods</h4>
             <div v-for="(name, i) in foods" :key="i" class="row">
               <input v-model.trim="foods[i]" placeholder="e.g. Apple" />
-              <button @click="removeFood(i)">Remove</button>
+              <button @click="removeFood(i)" style="margin-left:12px;">Remove</button>
             </div>
-            <button @click="addFood" type="button">+ Add Food</button>
+            <button @click="addFood" type="button" style="margin-top:12px;">+ Add Food</button>
           </div>
           <label>Notes<input v-model.trim="notes" placeholder="snack" /></label>
-          <button @click="submitMeal" :disabled="ml.loading || !canSubmit">{{ ml.loading ? 'Submitting…' : 'Submit' }}</button>
+          <button @click="submitMeal" :disabled="ml.loading || !canSubmit" style="margin-left:12px;">{{ ml.loading ? 'Submitting…' : 'Submit' }}</button>
           <p v-if="!auth.ownerId" class="hint">Set an Owner ID above to enable submission.</p>
           <p v-if="submitOk" class="ok">Meal submitted.</p>
           <p v-if="ml.error" class="err">{{ ml.error }}</p>
         </div>
-
-  <div class="card" ref="editPanelRef">
-          <h3>Edit/Delete Meal</h3>
-          <p class="hint" v-if="!editMealId">Select a meal from the list to edit or delete.</p>
-          <label>
-            Meal Type
-            <select v-model="editMealType">
-              <option>Breakfast</option>
-              <option>Lunch</option>
-              <option>Snacks</option>
-              <option>Dinner</option>
-            </select>
-          </label>
-          <div class="row">
-            <label>
-              Date
-              <input type="date" v-model="editDateLocal" />
-            </label>
-            <label>
-              Time
-              <div class="time-with-ampm">
-                <input type="time" v-model="editTimeLocal" step="60" />
-                <div class="ampm">
-                  <button type="button" :class="{ active: editTimePeriod === 'AM' }" @click="setEditTimePeriod('AM')">AM</button>
-                  <button type="button" :class="{ active: editTimePeriod === 'PM' }" @click="setEditTimePeriod('PM')">PM</button>
-                </div>
-              </div>
-            </label>
-          </div>
-          <div class="items">
-            <h4>Foods</h4>
-            <div v-for="(name, i) in editFoods" :key="i" class="row">
-              <input v-model.trim="editFoods[i]" placeholder="e.g. Apple" />
-              <button @click="editRemoveFood(i)">Remove</button>
-            </div>
-            <button @click="editAddFood" type="button">+ Add Food</button>
-          </div>
-          <label>Notes<input v-model.trim="editNotes" placeholder="..." /></label>
-          <div class="row">
-            <button @click="performEdit" :disabled="ml.loading || !editMealId">{{ ml.loading ? 'Saving…' : 'Save Edit' }}</button>
-            <button @click="performDelete" :disabled="ml.loading || !editMealId">{{ ml.loading ? 'Deleting…' : 'Delete' }}</button>
-          </div>
-        </div>
       </div>
 
-      <div>
+      <!-- Middle: Your Meals -->
+      <div class="col">
         <div class="card">
           <h3>Your Meals</h3>
           <div class="row">
@@ -134,15 +93,16 @@
               <h4 class="day-header">{{ group.day }}</h4>
               <ul class="ids">
                 <li v-for="m in group.items" :key="m.mealId">
-                  <button class="id-btn" @click="selectMeal(m.mealId)">
-                    <div class="meal-row">
-                      <span class="meal-time">{{ formatAt(m.at) }}</span>
-                      <span class="meal-type">{{ mealTypeOf(m.items) || '—' }}</span>
-                      <span class="meal-items">{{ summarizeItems(m.items) }}</span>
-                      <span class="edit-inline" @click.stop="quickEdit(m.mealId)">Edit</span>
-                      <span class="delete-inline" @click.stop="quickDelete(m.mealId)">Delete</span>
+                  <div class="meal-card-row">
+                    <div class="meal-card-main" @click="selectMeal(m.mealId)">
+                      <div class="meal-card-meta">{{ mealTypeOf(m.items) || '—' }} · {{ formatAt(m.at) }}</div>
+                      <div class="meal-card-items">{{ summarizeItems(m.items) }}</div>
                     </div>
-                  </button>
+                    <div class="meal-card-actions">
+                      <button class="meal-action-btn edit-btn" @click.stop="quickEdit(m.mealId)">Edit</button>
+                      <button class="meal-action-btn delete-btn" @click.stop="quickDelete(m.mealId)">Delete</button>
+                    </div>
+                  </div>
                 </li>
               </ul>
             </div>
@@ -150,22 +110,69 @@
           <template v-else>
             <ul class="ids">
               <li v-for="m in displayedMeals" :key="m.mealId">
-                <button class="id-btn" @click="selectMeal(m.mealId)">
-                  <div class="meal-row">
-                    <span class="meal-time">{{ formatAt(m.at) }}</span>
-                    <span class="meal-type">{{ mealTypeOf(m.items) || '—' }}</span>
-                    <span class="meal-items">{{ summarizeItems(m.items) }}</span>
-                    <span class="edit-inline" @click.stop="quickEdit(m.mealId)">Edit</span>
-                    <span class="delete-inline" @click.stop="quickDelete(m.mealId)">Delete</span>
+                <div class="meal-card-row">
+                  <div class="meal-card-main" @click="selectMeal(m.mealId)">
+                    <div class="meal-card-meta">{{ mealTypeOf(m.items) || '—' }} · {{ formatAt(m.at) }}</div>
+                    <div class="meal-card-items">{{ summarizeItems(m.items) }}</div>
                   </div>
-                </button>
+                  <div class="meal-card-actions">
+                    <button class="meal-action-btn edit-btn" @click.stop="quickEdit(m.mealId)">Edit</button>
+                    <button class="meal-action-btn delete-btn" @click.stop="quickDelete(m.mealId)">Delete</button>
+                  </div>
+                </div>
               </li>
             </ul>
           </template>
           <p v-if="!ml.loading && ml.meals.length === 0">No meals yet.</p>
         </div>
+      </div>
 
-  <div v-if="ml.current" class="card">
+      <!-- Right: Edit/Delete + Selected Meal -->
+      <div class="col">
+        <div class="card" ref="editPanelRef">
+          <h3>Edit/Delete Meal</h3>
+          <p class="hint" v-if="!editMealId">Select a meal from the list to edit or delete.</p>
+          <label style="display:block; margin-bottom:18px;">
+            Meal Type
+            <select v-model="editMealType">
+              <option>Breakfast</option>
+              <option>Lunch</option>
+              <option>Snacks</option>
+              <option>Dinner</option>
+            </select>
+          </label>
+          <div class="row">
+            <label>
+              Date
+              <input type="date" v-model="editDateLocal" />
+            </label>
+            <label class="time-field">
+              <span class="field-label">Time</span>
+              <div class="time-with-ampm">
+                <input type="time" v-model="editTimeLocal" step="60" />
+                <div class="ampm">
+                  <button type="button" :class="{ active: editTimePeriod === 'AM' }" @click="setEditTimePeriod('AM')">AM</button>
+                  <button type="button" :class="{ active: editTimePeriod === 'PM' }" @click="setEditTimePeriod('PM')">PM</button>
+                </div>
+              </div>
+            </label>
+          </div>
+          <div class="items">
+            <h4>Foods</h4>
+            <div v-for="(name, i) in editFoods" :key="i" class="row">
+              <input v-model.trim="editFoods[i]" placeholder="e.g. Apple" />
+              <button @click="editRemoveFood(i)" style="margin-left:12px;">Remove</button>
+            </div>
+            <button @click="editAddFood" type="button" style="margin-top:12px;">+ Add Food</button>
+          </div>
+          <label style="display:block; margin-bottom:24px;">Notes<input v-model.trim="editNotes" placeholder="..." /></label>
+          <div class="row" style="justify-content: flex-start;">
+            <button @click="performEdit" :disabled="ml.loading || !editMealId" class="meal-action-btn edit-btn" style="margin-right:16px; margin-left:0;">{{ ml.loading ? 'Saving…' : 'Save Edit' }}</button>
+            <button @click="performDelete" :disabled="ml.loading || !editMealId" class="meal-action-btn delete-btn" style="margin-left:0;">{{ ml.loading ? 'Deleting…' : 'Delete' }}</button>
+          </div>
+        </div>
+
+        <div v-if="ml.current" class="card">
           <h3>Selected Meal</h3>
           <div class="kv"><span>When:</span> <span>{{ formatAt(ml.current.at || ml.current.date) || '—' }}</span></div>
           <div class="kv"><span>Meal type:</span> <span>{{ mealTypeOf(ml.current.items) || '—' }}</span></div>
@@ -192,7 +199,13 @@ import { useMealLogStore, type MealItem, type MealSummary } from '../stores/meal
 const auth = useAuthStore()
 const ml = useMealLogStore()
 
-const owner = ref(auth.ownerId ?? '')
+function stripOwner(id?: string | null) {
+  const s = (id || '').trim()
+  return s.startsWith('user:') ? s.slice(5) : s
+}
+const owner = ref(stripOwner(auth.ownerId))
+const ownerLabel = computed(() => stripOwner(auth.ownerId))
+watch(() => auth.ownerId, (id) => { owner.value = stripOwner(id) })
 
 // Submit form state
 const dateLocal = ref(toLocalDate(new Date()))
@@ -477,26 +490,93 @@ function setEditTimePeriod(target: 'AM'|'PM') {
 
 <style scoped>
 .auth-box { display:flex; gap:8px; align-items:center; margin-bottom: 16px; }
-.grid { display:grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.grid { display:grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.grid-3 { grid-template-columns: repeat(3, minmax(450px, 1fr)); }
+.col { min-width: 0; }
+@media (max-width: 1420px) { .grid-3 { grid-template-columns: repeat(2, minmax(450px, 1fr)); } }
+@media (max-width: 960px) { .grid-3 { grid-template-columns: minmax(450px, 1fr); } }
 @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-.row { display:flex; gap:8px; align-items:center; }
-.card { border:1px solid #e5e5e5; border-radius:8px; padding:12px; margin-bottom: 16px; }
+.row { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+.card { border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom: 16px; background: var(--surface); }
 .items { margin: 8px 0; }
 .err { color:#b00020; }
-.ok { color:#0b7a0b; }
-.hint { color:#666; font-size: 12px; }
+.ok { color:var(--brand-primary-strong); }
+.hint { color:var(--text-muted); font-size: 12px; }
 .ids { list-style: none; padding: 0; display: grid; gap: 6px; }
-.id-btn { background: transparent; border: 1px solid #ddd; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
-.meal-row { display:flex; gap:8px; align-items:center; justify-content:flex-start; }
-.meal-time { color:#555; font-size:12px; }
-.meal-type { color:#333; font-size:12px; font-weight:600; }
-.meal-items { color:#222; }
-.edit-inline { margin-left: auto; color:#0b5ed7; font-size:12px; cursor:pointer; text-decoration: underline; }
-.delete-inline { color:#b00020; font-size:12px; cursor:pointer; margin-left: 8px; text-decoration: underline; }
+.id-btn { background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+.meal-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  gap: 16px;
+}
+.meal-card-main {
+  flex: 1 1 auto;
+  cursor: pointer;
+}
+.meal-card-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.meal-card-items {
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--text);
+}
+.meal-card-actions {
+  display: flex;
+  gap: 16px;
+}
+.meal-action-btn {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 8px 18px;
+  border: 1px solid var(--brand-primary);
+  background: var(--brand-primary);
+  color: #fff;
+  cursor: pointer;
+  margin-left: 0;
+  margin-right: 0;
+  transition: background .15s, border-color .15s;
+}
+.meal-action-btn.edit-btn {
+  margin-left: auto;
+}
+.meal-action-btn:hover {
+  background: var(--brand-primary-strong);
+  border-color: var(--brand-primary-strong);
+}
+.delete-btn {
+  border-color: var(--brand-accent-strong);
+  background: var(--brand-accent-strong);
+}
+.delete-btn:hover {
+  background: #b00020;
+  border-color: #b00020;
+}
+.meal-row span {
+  font-size: 13px;
+}
 .time-with-ampm { display:flex; gap:8px; align-items:center; }
+.time-field { display:flex; align-items:center; gap:8px; }
+.field-label { min-width:max-content; }
 .ampm { display:flex; gap:4px; }
-.ampm button { border:1px solid #ccc; background:#fff; padding:2px 6px; border-radius:4px; cursor:pointer; }
-.ampm button.active { background:#0b5ed7; color:#fff; border-color:#0b5ed7; }
-.day-header { margin: 8px 0 4px; }
+.ampm button { border:1px solid var(--border); background: rgba(34,197,94,0.16); padding:2px 6px; border-radius:4px; cursor:pointer; }
+.ampm button.active { background: var(--brand-primary); color:#fff; border-color: var(--brand-primary); }
+.day-header {
+  margin: 8px 0 4px;
+  font-family: 'Fredoka', Nunito, Arial, sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #38A700;
+}
 .kv { display: grid; grid-template-columns: 100px 1fr; gap: 8px; margin: 4px 0; }
 </style>

@@ -30,9 +30,41 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
         if (obj && typeof obj === 'object') return obj
       } catch {}
       return {}
+    })(),
+    // Hidden metrics per owner (so one user can "delete" a metric label they don't use)
+    hiddenByOwner: ((): Record<string, string[]> => {
+      try {
+        const raw = localStorage.getItem('qc_hiddenByOwner')
+        const obj = raw ? JSON.parse(raw) : {}
+        if (obj && typeof obj === 'object') return obj
+      } catch {}
+      return {}
     })()
   }),
   actions: {
+    hiddenForOwner(owner?: string) {
+      const key = owner || useAuthStore().ownerId || '__none__'
+      const arr = this.hiddenByOwner[key] || []
+      return new Set<string>(arr)
+    },
+    saveHidden() {
+      try { localStorage.setItem('qc_hiddenByOwner', JSON.stringify(this.hiddenByOwner)) } catch {}
+    },
+    hideMetricForOwner(metricId: string, owner?: string) {
+      const key = owner || useAuthStore().ownerId || '__none__'
+      const arr = this.hiddenByOwner[key] || []
+      if (!arr.includes(metricId)) {
+        this.hiddenByOwner[key] = [...arr, metricId]
+        this.saveHidden()
+      }
+      // Remove from visible collections
+      this.allMetrics = this.allMetrics.filter(m => m.metricId !== metricId)
+      for (const [name, list] of this.metricsByName.entries()) {
+        this.metricsByName.set(name, list.filter(m => m.metricId !== metricId))
+      }
+      if (this.selectedMetricId === metricId) this.selectedMetricId = null
+      this.saveAllMetrics()
+    },
     mergeAllMetrics(incoming: Metric | Metric[]) {
       const items = Array.isArray(incoming) ? incoming : [incoming]
       // Merge by metricId preserving existing unit when incoming is undefined
@@ -71,7 +103,9 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
         }
       }
       for (const m of merged) if (keepIds.has(m.metricId)) result.push(m)
-      this.allMetrics = result.sort((a,b)=>a.name.localeCompare(b.name))
+      // Filter by hidden metrics for the current owner
+      const hidden = this.hiddenForOwner()
+      this.allMetrics = result.filter(m => !hidden.has(m.metricId)).sort((a,b)=>a.name.localeCompare(b.name))
       this.saveAllMetrics()
     },
     async hydrateAllMetrics() {
@@ -86,7 +120,8 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
           if (idx >= 0) merged[idx] = { ...merged[idx], ...m }
           else merged.push(m)
         }
-        this.allMetrics = merged.sort((a,b)=>a.name.localeCompare(b.name))
+        const hidden = this.hiddenForOwner(auth.ownerId)
+        this.allMetrics = merged.filter(m => !hidden.has(m.metricId)).sort((a,b)=>a.name.localeCompare(b.name))
         this.saveAllMetrics()
       } catch {}
     },
@@ -259,20 +294,34 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
       this.loading = true
       this.error = null
       try {
-        const resp: any = await QuickCheckInsAPI.deleteMetric({ metricId, owner: auth.ownerId })
-        if (resp && typeof resp === 'object' && typeof resp.error === 'string' && resp.error) {
-          throw new Error(resp.error)
+        try {
+          const resp: any = await QuickCheckInsAPI.deleteMetric({ metricId, owner: auth.ownerId })
+          if (resp && typeof resp === 'object' && typeof resp.error === 'string' && resp.error) {
+            throw new Error(resp.error)
+          }
+          // Success: remove globally for this view
+          this.allMetrics = this.allMetrics.filter(m => m.metricId !== metricId)
+          for (const [key, arr] of this.metricsByName.entries()) {
+            this.metricsByName.set(key, arr.filter(m => m.metricId !== metricId))
+          }
+          if (this.selectedMetricId === metricId) this.selectedMetricId = null
+          this.checkIns = this.checkIns.map(ci => ci.metric === metricId ? { ...ci, metricName: undefined } : ci)
+          this.saveAllMetrics()
+          // Re-hydrate from server to keep parity
+          try { await this.hydrateAllMetrics() } catch {}
+          return true
+        } catch (apiErr: any) {
+          // If API deletion fails, allow per-owner hide when user has zero check-ins for that metric
+          try {
+            const list = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId, metricId })
+            const hasAny = Array.isArray(list) && list.length > 0
+            if (!hasAny) {
+              this.hideMetricForOwner(metricId, auth.ownerId)
+              return true
+            }
+          } catch {}
+          throw apiErr
         }
-  this.allMetrics = this.allMetrics.filter(m => m.metricId !== metricId)
-        for (const [key, arr] of this.metricsByName.entries()) {
-          this.metricsByName.set(key, arr.filter(m => m.metricId !== metricId))
-        }
-        if (this.selectedMetricId === metricId) this.selectedMetricId = null
-        this.checkIns = this.checkIns.map(ci => ci.metric === metricId ? { ...ci, metricName: undefined } : ci)
-  this.saveAllMetrics()
-        // Re-hydrate from server to keep parity
-        try { await this.hydrateAllMetrics() } catch {}
-        return true
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to delete metric'
         return false

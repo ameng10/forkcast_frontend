@@ -29,9 +29,9 @@ async function submit() {
 </script>
 
 <style scoped>
-.card { border:1px solid #e5e5e5; border-radius:8px; padding:12px; }
+.card { border:1px solid var(--border); border-radius:8px; padding:12px; background: var(--surface); }
 .row { display:flex; gap:12px; align-items:flex-end; margin:8px 0; }
 label { display:flex; flex-direction:column; gap:4px; }
-.hint { color:#666; }
+.hint { color:var(--text-muted); }
 .err { color:#b00020; }
 </style>

@@ -4,30 +4,51 @@
 
     <div class="auth-box">
       <label>
-        Owner ID:
-  <input v-model.trim="owner" placeholder="Alice or user:Alice" />
+        User:
+        <input v-model.trim="owner" placeholder="e.g. alice" />
       </label>
-      <button @click="saveOwner" :disabled="!owner">Use Owner</button>
+      <button @click="saveOwner" :disabled="!owner">Use User</button>
       <button @click="clearOwner" v-if="auth.ownerId">Clear</button>
-      <p v-if="auth.ownerId">Active owner: <strong>{{ auth.ownerId }}</strong></p>
+      <p v-if="auth.ownerId">Active User: <strong>{{ ownerLabel }}</strong></p>
     </div>
 
-    <div class="grid">
-      <div>
-  <QuickCheckInForm :presetMetricName="presetMetric" @recorded="onRecorded" />
-        <hr />
-        <DefineMetricForm @metric-defined="onMetricDefined" />
+    <div class="grid grid-3">
+      <!-- Left: Record a Check-In -->
+      <div class="col">
+        <QuickCheckInForm :presetMetricName="presetMetric" @recorded="onRecorded" />
       </div>
-      <div>
-  <h3>Recent Check-Ins</h3>
-  <QuickCheckInsList ref="listRef" />
+
+      <!-- Middle: Recent Check-Ins -->
+      <div class="col">
+        <div class="card">
+          <h3>Recent Check-Ins</h3>
+          <QuickCheckInsList ref="listRef" :showDefinedMetricsToggle="false" />
+        </div>
+      </div>
+
+      <!-- Right: Define a Metric + Defined Metrics list -->
+      <div class="col">
+        <div class="card">
+          <h3>Define a Metric</h3>
+          <DefineMetricForm @metric-defined="onMetricDefined" />
+          <hr />
+          <h3 class="metrics-title">Defined metrics ({{ qci.allMetrics.length }})</h3>
+          <ul class="metrics-list">
+            <li v-for="m in qci.allMetrics" :key="m.metricId" class="metric-item">
+              <button class="metric-link" @click="selectMetric(m.name)">{{ m.name }}</button>
+              <button class="delete-metric" title="Delete metric" @click="doDeleteMetric(m.metricId)">Delete</button>
+            </li>
+          </ul>
+          <p v-if="!qci.allMetrics.length" class="empty">No metrics defined yet.</p>
+          <p v-if="qci.error" class="err">{{ qci.error }}</p>
+        </div>
       </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref, watchEffect } from 'vue'
+import { ref, watch, watchEffect, onMounted, computed } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useQuickCheckInsStore } from '../stores/quickCheckIns'
 import QuickCheckInsList from '../components/QuickCheckInsList.vue'
@@ -39,7 +60,16 @@ const qci = useQuickCheckInsStore()
 const listRef = ref<InstanceType<typeof QuickCheckInsList> | null>(null)
 const presetMetric = ref<string | undefined>(undefined)
 
-const owner = ref(auth.ownerId ?? '')
+function stripOwner(id?: string | null) {
+  const s = (id || '').trim()
+  return s.startsWith('user:') ? s.slice(5) : s
+}
+const owner = ref(stripOwner(auth.ownerId))
+watch(() => auth.ownerId, (id) => { owner.value = stripOwner(id) })
+const ownerLabel = computed(() => {
+  const id = auth.ownerId || ''
+  return id.startsWith('user:') ? id.slice(5) : id
+})
 
 function saveOwner() {
   auth.setSession(owner.value)
@@ -68,17 +98,50 @@ function onMetricDefined(payload: { name: string }) {
   presetMetric.value = payload.name
 }
 
+async function doDeleteMetric(metricId: string) {
+  if (!metricId) return
+  const ok = await qci.deleteMetric(metricId)
+  if (ok) {
+    // keep UI reactive; list and metrics will refresh via store
+  }
+}
+
+function selectMetric(name?: string) {
+  if (!name) return
+  listRef.value?.setMetric(name)
+}
+
 watchEffect(() => {
   if (auth.ownerId && qci.checkIns.length === 0) {
     qci.listCheckIns()
   }
 })
+
+onMounted(() => {
+  // Ensure defined metrics are hydrated for the right-side list
+  qci.hydrateAllMetrics().catch(() => {})
+})
 </script>
 
 <style scoped>
 .auth-box { display:flex; gap:8px; align-items:center; margin-bottom: 16px; }
-.grid { display:grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-@media (max-width: 900px) {
-  .grid { grid-template-columns: 1fr; }
+.grid { display:grid; gap: 20px; align-items: start; }
+.grid-3 { grid-template-columns: repeat(3, minmax(450px, 1fr)); }
+.col { min-width: 0; }
+.col .card { border:1px solid var(--border); border-radius:8px; padding:12px; background: var(--surface); }
+/* Breakpoints for strict 3/2/1 layout based on 450px min column + gaps */
+@media (max-width: 1420px) {
+  .grid-3 { grid-template-columns: repeat(2, minmax(450px, 1fr)); }
 }
+@media (max-width: 960px) {
+  .grid-3 { grid-template-columns: minmax(450px, 1fr); }
+}
+/* Defined metrics styling */
+.metrics-title { color: var(--brand-accent); }
+.metrics-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.metric-item { display:flex; justify-content:space-between; gap:8px; align-items:center; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.metric-item:last-child { border-bottom: none; }
+.metric-link { background: transparent; border: none; padding: 0; color: var(--text); cursor: pointer; text-align: left; max-width: 100%; overflow-wrap: anywhere; }
+.delete-metric { color:#b00020; border:none; background:transparent; cursor:pointer; }
+.empty { color: var(--text-muted); }
 </style>

@@ -8,7 +8,14 @@
         <datalist id="metricOptions">
           <option v-for="m in store.allMetrics" :key="m.metricId" :value="m.name" />
         </datalist>
-  <small v-if="metricName && !metricExists" class="warn">This metric doesn't exist. Please define it first.</small>
+        <small v-if="metricName && !metricExists" class="warn">This metric doesn't exist. Please define it first.</small>
+      </label>
+      <label>
+        Choose Metric
+        <select v-model="selectedMetricName" @change="onChooseMetric">
+          <option value="">Select metric…</option>
+          <option v-for="m in metricsOptions" :key="m.metricId" :value="m.name">{{ m.name }}</option>
+        </select>
       </label>
       <label>
         Value
@@ -17,7 +24,7 @@
     </div>
     <div class="row">
       <label>
-        When (optional)
+        When
         <input v-model="timestampLocal" type="datetime-local" step="1" />
       </label>
       <button type="button" @click="setNow">Now</button>
@@ -41,6 +48,8 @@ const value = ref<number | null>(null)
 const timestamp = ref<number | null>(null)
 const timestampLocal = ref<string>('')
 const valueInput = ref<HTMLInputElement | null>(null)
+const selectedMetricName = ref('')
+const metricsOptions = computed(() => (store.allMetrics || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || '')))
 
 watch(() => props.presetMetricName, async (nm) => {
   if (nm) {
@@ -65,6 +74,13 @@ onMounted(async () => {
   if (props.presetMetricName) await store.loadMetrics(props.presetMetricName)
   } catch {}
 })
+
+function onChooseMetric() {
+  if (selectedMetricName.value) {
+    metricName.value = selectedMetricName.value
+    nextTick(() => valueInput.value?.focus())
+  }
+}
 
 async function submit() {
   if (!canSubmit.value) return
@@ -102,8 +118,8 @@ const emit = defineEmits<{ (e: 'recorded', payload: { metricName: string }): voi
 </script>
 
 <style scoped>
-.card { border:1px solid #e5e5e5; border-radius:8px; padding:12px; }
-.row { display:flex; gap:12px; align-items:flex-end; margin:8px 0; }
+.card { border:1px solid var(--border); border-radius:8px; padding:12px; background: var(--surface); }
+.row { display:flex; gap:12px; align-items:flex-end; margin:8px 0; flex-wrap: wrap; }
 label { display:flex; flex-direction:column; gap:4px; }
 .err { color:#b00020; }
 </style>

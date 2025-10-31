@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="filters">
-  <label>
+      <label>
         Metric:
         <input v-model.trim="metricFilter" list="metricOptions" placeholder="e.g. weight" />
         <datalist id="metricOptions">
@@ -13,13 +13,18 @@
       <label>
         Sort by:
         <select v-model="store.sortBy" @change="applyFilter">
-          <option value="time">Time (newest)</option>
+          <option value="time">Date (newest)</option>
           <option value="metricName">Metric name (A→Z)</option>
         </select>
       </label>
+      <label style="margin-left:16px;">
+        Group by day
+        <input type="checkbox" v-model="groupByDay" />
+      </label>
     </div>
 
-    <div class="defined-metrics">
+
+    <div v-if="showDefinedMetricsToggle" class="defined-metrics">
       <button class="metrics-toggle" @click="showMetrics = !showMetrics">Defined metrics ({{ store.allMetrics.length }}) ▾</button>
       <div v-if="showMetrics" class="metrics-popup">
         <ul v-if="store.allMetrics.length" class="metrics-list">
@@ -37,41 +42,61 @@
     <p v-if="store.error" class="err">{{ store.error }}</p>
 
     <ul class="list">
-      <li v-for="ci in store.checkIns" :key="ci.checkInId">
-        <div class="row">
-          <div>
-            <div class="meta">{{ ci.metricName || 'metric' }} · {{ formatTime(ci.timestamp, ci.at) }}</div>
-            <div class="val">{{ ci.value }}</div>
+      <template v-for="group in groupedCheckIns" :key="group.day || 'all'">
+  <li v-if="groupByDay && group.day" class="day-header" style="margin: 8px 0 4px; font-family: 'Fredoka', Nunito, Arial, sans-serif; font-size: 18px; font-weight: 700; color: var(--brand-primary);">{{ group.day }}</li>
+        <li v-for="ci in group.items" :key="ci.checkInId">
+          <div class="row">
+            <div>
+              <div class="meta" style="font-size:12px;">{{ ci.metricName || 'metric' }} · {{ formatTime(ci.timestamp, ci.at) }}</div>
+              <div class="val" style="font-size:16px; font-weight:600;">{{ ci.value }}</div>
+            </div>
+            <div class="actions">
+              <button @click="startEdit(ci.checkInId, ci.value)" style="background:var(--brand-primary);color:#fff;border-radius:8px;padding:8px 18px;font-size:15px;font-weight:600;border:1px solid var(--brand-primary);margin-left:0;margin-right:8px;">Edit</button>
+              <button @click="remove(ci.checkInId)" style="background:#b00020;color:#fff;border-radius:8px;padding:8px 18px;font-size:15px;font-weight:600;border:1px solid #b00020;margin-left:0;">Delete</button>
+            </div>
           </div>
-          <div class="actions">
-            <button @click="startEdit(ci.checkInId, ci.value)">Edit</button>
-            <button class="danger" @click="remove(ci.checkInId)">Delete</button>
+          <div v-if="editingId === ci.checkInId" class="edit">
+            <label class="edit-field">
+              Value
+              <input type="number" v-model.number="editValue" step="any" />
+            </label>
+            <label class="edit-field">
+              When
+              <input type="datetime-local" v-model="editAt" step="1" />
+            </label>
+            <button @click="saveEdit(ci.checkInId)" :disabled="store.loading">{{ store.loading ? 'Saving…' : 'Save' }}</button>
+            <button @click="cancelEdit" :disabled="store.loading">Cancel</button>
           </div>
-        </div>
-  <div v-if="editingId === ci.checkInId" class="edit">
-          <label class="edit-field">
-            Value
-            <input type="number" v-model.number="editValue" step="any" />
-          </label>
-          <label class="edit-field">
-            When
-            <input type="datetime-local" v-model="editAt" step="1" />
-          </label>
-          <button @click="saveEdit(ci.checkInId)" :disabled="store.loading">{{ store.loading ? 'Saving…' : 'Save' }}</button>
-          <button @click="cancelEdit" :disabled="store.loading">Cancel</button>
-        </div>
-      </li>
+        </li>
+      </template>
     </ul>
   <p v-if="!store.loading && store.checkIns.length === 0">No check-ins yet.</p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+
+import { ref, onMounted, computed, watchEffect } from 'vue'
 import { useQuickCheckInsStore } from '../stores/quickCheckIns'
-import { watchEffect } from 'vue'
+
+const groupByDay = ref(false)
+const groupedCheckIns = computed(() => {
+  if (!groupByDay.value) return [{ day: null, items: store.checkIns }]
+  const groups = new Map<string, any[]>()
+  for (const ci of store.checkIns) {
+    const d = ci.timestamp ? new Date(ci.timestamp) : (ci.at ? new Date(ci.at) : new Date())
+    const key = isNaN(d.getTime()) ? 'Unknown' : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  if (!groups.has(key)) groups.set(key, [])
+  const arr = groups.get(key)
+  if (arr) arr.push(ci)
+  }
+  return Array.from(groups.entries())
+    .sort((a, b) => a[0] < b[0] ? 1 : -1)
+    .map(([day, items]) => ({ day, items }))
+})
 
 const store = useQuickCheckInsStore()
+const props = defineProps<{ showDefinedMetricsToggle?: boolean }>()
 const showMetrics = ref(false)
 async function onDeleteMetric(metricId: string) {
   await store.deleteMetric(metricId)
@@ -162,10 +187,11 @@ function toInputLocal(date: Date) {
 </script>
 
 <style scoped>
-.filters { display:flex; gap:8px; align-items:center; margin-bottom: 8px; }
+.filters { display:flex; gap:8px; align-items:center; margin-bottom: 8px; flex-wrap: wrap; }
 .list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; }
-.row { display:flex; justify-content:space-between; align-items:center; padding:8px; border:1px solid #e5e5e5; border-radius:8px; }
-.meta { color:#666; font-size:12px; }
+.row { display:flex; justify-content:space-between; align-items:center; padding:8px; border:1px solid var(--border); border-radius:8px; background: var(--surface); }
+.actions { display:flex; align-items:center; gap:8px; }
+.meta { color:var(--text-muted); font-size:12px; }
 .val { font-weight:600; font-size:16px; }
 .edit { margin-top:8px; display:flex; gap:8px; align-items:flex-end; flex-wrap: wrap; }
 .edit-field { display:flex; gap:6px; align-items:center; }
@@ -176,12 +202,13 @@ function toInputLocal(date: Date) {
 </style>
 <style scoped>
 .defined-metrics { position: relative; margin-bottom: 8px; }
-.metrics-toggle { border:1px solid #ddd; background:#fff; padding:6px 10px; border-radius:6px; cursor:pointer; }
-.metrics-popup { position: absolute; z-index: 10; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 8px; margin-top: 6px; width: 260px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.metrics-toggle { border:1px solid var(--border); background:var(--surface); padding:6px 10px; border-radius:6px; cursor:pointer; color: var(--brand-accent); }
+.metrics-toggle:hover { background: rgba(34,197,94,0.08); }
+.metrics-popup { position: absolute; z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 6px; width: 260px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
 .metrics-list { list-style: none; margin: 0; padding: 0; max-height: 200px; overflow: auto; }
-.metrics-list li { padding: 6px 4px; border-bottom: 1px solid #f2f2f2; }
+.metrics-list li { padding: 6px 4px; border-bottom: 1px solid var(--border); }
 .metrics-list li:last-child { border-bottom: none; }
 .metric-item { display:flex; justify-content:space-between; gap:8px; align-items:center; }
 .delete-metric { color:#b00020; border:none; background:transparent; cursor:pointer; }
-.empty { color: #666; }
+.empty { color: var(--text-muted); }
 </style>

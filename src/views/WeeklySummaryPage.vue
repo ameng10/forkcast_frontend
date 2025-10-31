@@ -4,12 +4,12 @@
 
     <div class="auth-box">
       <label>
-        Owner ID
-        <input v-model.trim="owner" placeholder="Alice or user:Alice" />
+        User:
+        <input v-model.trim="owner" placeholder="e.g. alice" />
       </label>
-      <button @click="useOwner" :disabled="!owner">Use Owner</button>
+      <button @click="saveOwner" :disabled="!owner">Use User</button>
       <button @click="clearOwner" v-if="auth.ownerId">Clear</button>
-      <p v-if="auth.ownerId">Active owner: <strong>{{ auth.ownerId }}</strong></p>
+      <p v-if="auth.ownerId">Active User: <strong>{{ ownerLabel }}</strong></p>
     </div>
 
     <div class="range-bar">
@@ -91,7 +91,12 @@ import { mineWeeklyInsights } from '../lib/insightMining'
 const auth = useAuthStore()
 const ml = useMealLogStore()
 const quickStore = useQuickCheckInsStore()
-const owner = ref(auth.ownerId ?? '')
+function stripOwner(id?: string | null) {
+  const s = (id || '').trim()
+  return s.startsWith('user:') ? s.slice(5) : s
+}
+const owner = ref(stripOwner(auth.ownerId))
+const ownerLabel = computed(() => stripOwner(auth.ownerId))
 
 const now = () => Date.now()
 const ONE_DAY = 24 * 60 * 60 * 1000
@@ -207,16 +212,38 @@ function fmt(n: number) {
   return n.toFixed(2)
 }
 
+// Avoid showing raw IDs as metric names (MongoID/UUID/ULID/long hex etc.)
+function isLikelyId(s?: string) {
+  if (!s) return false
+  const str = String(s).trim()
+  if (!str) return false
+  // Mongo ObjectId
+  if (/^[a-f0-9]{24}$/i.test(str)) return true
+  // UUID v4-like
+  if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(str)) return true
+  // ULID
+  if (/^[0-9A-HJKMNP-TV-Z]{26}$/.test(str)) return true
+  // Long hex-ish tokens
+  if (/^[a-f0-9]{16,}$/i.test(str)) return true
+  return false
+}
+
 async function loadAll() {
   if (!auth.ownerId) return
   loadError.value = null
   diag.value = { apiRangedCount: 0, apiAllCount: 0, clientInRangeCount: 0 }
   const issues: string[] = []
+  // Track metric loading errors across scopes
+  let metricsError: string | null = null
   // Meals: hydrate list and rely on client-side filter by date
   try {
     await ml.listForOwner()
   } catch (err: any) {
-    issues.push(err?.message ?? 'Unable to load meals')
+    const code = err?.response?.status
+    // Treat 404 as no meals available for owner (not an error)
+    if (code !== 404) {
+      issues.push(err?.message ?? 'Unable to load meals')
+    }
   }
   if (auth.ownerId && quickStore.allMetrics.length === 0) {
     try { await quickStore.hydrateAllMetrics() } catch {}
@@ -252,19 +279,20 @@ async function loadAll() {
   }
   try {
     let metrics: Array<{ metricId: string; name: string }> = []
-    let metricsError: string | null = null
     try {
       metrics = await QuickCheckInsAPI.listMetricsForOwner({ owner: auth.ownerId })
     } catch (err: any) {
       metrics = []
-      metricsError = err?.message ?? 'Unable to load metric names'
+  const code = err?.response?.status
+  // Treat 404 as no metrics defined yet (not an error)
+  metricsError = code === 404 ? null : (err?.message ?? 'Unable to load metric names')
     }
     const nameMap = new Map<string, string>()
     for (const m of metrics) {
       if (!m?.metricId) continue
       const nm = typeof m.name === 'string' ? m.name.trim() : ''
       if (nm) nameMap.set(m.metricId, nm)
-      if (nm) quickStore.mergeAllMetrics({ metricId: m.metricId, name: nm, unit: m.unit })
+      if (nm) quickStore.mergeAllMetrics({ metricId: m.metricId, name: nm })
     }
     for (const m of quickStore.allMetrics) {
       if (m?.metricId && m.name?.trim()) nameMap.set(m.metricId, m.name.trim())
@@ -277,8 +305,15 @@ async function loadAll() {
       listRaw = Array.isArray(ranged) ? ranged : []
       diag.value.apiRangedCount = listRaw.length
     } catch (err: any) {
-      listRaw = []
-      rangedError = err?.message ?? 'Unable to load check-ins for the selected range'
+      const code = err?.response?.status
+      // Treat 404 as no data for this range (not an error)
+      if (code === 404) {
+        listRaw = []
+        rangedError = null
+      } else {
+        listRaw = []
+        rangedError = err?.message ?? 'Unable to load check-ins for the selected range'
+      }
     }
 
     if (listRaw.length === 0) {
@@ -293,9 +328,15 @@ async function loadAll() {
         })
         diag.value.clientInRangeCount = listRaw.length
       } catch (err: any) {
+        const code = err?.response?.status
         listRaw = []
         diag.value.clientInRangeCount = 0
-        allError = err?.message ?? 'Unable to load full check-in history'
+        // Treat 404 as no history rather than an error
+        if (code === 404) {
+          allError = null
+        } else {
+          allError = err?.message ?? 'Unable to load full check-in history'
+        }
       }
       if (!listRaw.length && rangedError) {
         issues.push(allError || rangedError)
@@ -339,19 +380,22 @@ async function loadAll() {
         (r as any).payload?.metricName,
         metricId ? nameMap.get(metricId) : undefined
       ]
-      let candidate = primaryNameCandidates.find((n) => typeof n === 'string' && n.trim().length) as string | undefined
+      // Pick the first non-empty, non-ID-like candidate
+      let candidate = primaryNameCandidates.find((n) => typeof n === 'string' && n.trim().length && !isLikelyId(String(n))) as string | undefined
       if (candidate) {
         candidate = candidate.trim()
         if (metricId && candidate === metricId) candidate = ''
       }
       if (!candidate && metricId && typeof metricId === 'string') {
         const cached = quickStore.allMetrics.find((m) => m.metricId === metricId)
-        if (cached?.name?.trim()) candidate = cached.name.trim()
+        const nm = cached?.name?.trim()
+        if (nm && !isLikelyId(nm)) candidate = nm
       }
+      // Derive a readable name only if the metricId encodes a label (e.g., "metric:weight"); skip for id-like tokens
       if (!candidate && metricId && typeof metricId === 'string') {
-        const slug = metricId.replace(/^metric[:_-]?/i, '').replace(/^check[:_-]?/i, '')
-        if (slug.trim() && /[a-zA-Z]/.test(slug)) {
-          candidate = slug
+        const cleaned = metricId.replace(/^metric[:_-]?/i, '').replace(/^check[:_-]?/i, '')
+        if (cleaned.trim() && !isLikelyId(cleaned) && /[a-zA-Z]/.test(cleaned)) {
+          candidate = cleaned
             .replace(/[_-]+/g, ' ')
             .replace(/\b\w/g, (c) => c.toUpperCase())
         }
@@ -386,6 +430,8 @@ function useOwner() {
   auth.setSession(owner.value)
   loadAll()
 }
+// Keep compatibility with template's button handler
+const saveOwner = useOwner
 function clearOwner() {
   auth.clear()
   loadError.value = null
@@ -455,18 +501,26 @@ async function buildBackendReport() {
 
 <style scoped>
 .auth-box { display:flex; gap:8px; align-items:center; margin-bottom: 16px; }
-.grid { display:grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.grid { display:grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 @media (max-width: 1000px) { .grid { grid-template-columns: 1fr; } }
-.card { border:1px solid #e5e5e5; border-radius:8px; padding:12px; }
-.hint { color:#666; font-size:12px; }
+.card { border:1px solid var(--border); border-radius:8px; padding:12px; background: var(--surface); }
+.hint { color:var(--text-muted); font-size:12px; }
 .bullets { margin: 0; padding-left: 16px; }
 .ci-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 .row { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .metric-name { font-weight:600; }
-.metric-stats { color:#333; font-size: 13px; display:flex; gap:8px; align-items:center; }
-.up { color:#0b7a0b; }
+.metric-stats { color:var(--text); font-size: 13px; display:flex; gap:8px; align-items:center; }
+.up { color:var(--brand-primary-strong); }
 .down { color:#b00020; }
-.note { color:#666; font-size:12px; margin-top: 8px; }
+.note { color:var(--text-muted); font-size:12px; margin-top: 8px; }
 .err { color:#b00020; margin: 12px 0; font-size:13px; }
-.report-box { background: #fafafa; border: 1px solid #eee; padding: 8px; border-radius: 6px; margin: 8px 0; white-space: pre-wrap; }
+.report-box { background: #F8FAFC; border: 1px solid var(--border); padding: 8px; border-radius: 6px; margin: 8px 0; white-space: pre-wrap; }
+</style>
+<style scoped>
+.range-controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
 </style>
