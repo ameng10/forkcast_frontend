@@ -317,9 +317,12 @@ export const QuickCheckInsAPI = {
       for (const url of endpoints) {
         try { const r = await api.post(url, body); return normalize(r.data) } catch (err: any) {
           lastErr = err
-          if (![400,404,422].includes(err?.response?.status)) throw err
+          const code = err?.response?.status
+          if (![400,404,422].includes(code)) throw err
         }
       }
+      // Treat pure 404 path absence as no metrics yet
+      if (lastErr?.response?.status === 404) return []
       throw lastErr
     }
     return run()
@@ -339,120 +342,77 @@ export const QuickCheckInsAPI = {
 
 // MealLog API helpers (updated shapes from spec)
 export const MealLogAPI = {
-  submit(payload: { ownerId: string; at: string; items: Array<Record<string, any>>; notes?: string }) {
-    return api.post('/MealLog/submit', payload).then(r => r.data as { mealId: string })
-  },
-  edit(payload: { callerId: string; mealId: string; items?: Array<Record<string, any>>; notes?: string; at?: string }) {
-    // Spec-first with broad time aliases to maximize compatibility
-    const at = (payload as any).at as string | undefined
-    const body: any = {
-      callerId: (payload as any).callerId,
-      ownerId: (payload as any).callerId,
-      owner: (payload as any).callerId,
-      requester: (payload as any).callerId,
-      mealId: payload.mealId,
-      id: payload.mealId,
-      _id: payload.mealId,
-      mealObjectId: payload.mealId,
-      mealDocumentId: payload.mealId
-    }
-    if (payload.items !== undefined) body.items = payload.items
-    if (payload.notes !== undefined) body.notes = payload.notes
-    if (at) {
-      const ts = Date.parse(at)
-      body.at = at
-      if (!Number.isNaN(ts)) {
-        const ms = ts
-        const sec = Math.floor(ms / 1000)
-        // Include common aliases some backends accept
-        Object.assign(body, {
-          date: ms,
-          timestamp: sec,
-          newAt: at,
-          newDate: ms,
-          newTimestamp: sec,
-          when: at,
-          time: at
-        })
-      }
-    }
-    return api.post('/MealLog/edit', body)
-      .then(r => r.data as {})
-      .catch(async (e) => {
-        if ([400, 404, 422].includes(e?.response?.status)) {
-          // Fallback: try minimal then alias variants flipped if primary failed
-          const minimal: any = {
-            callerId: (payload as any).callerId,
-            ownerId: (payload as any).callerId,
-            owner: (payload as any).callerId,
-            requester: (payload as any).callerId,
-            mealId: payload.mealId,
-            id: payload.mealId,
-            _id: payload.mealId,
-            mealObjectId: payload.mealId,
-            mealDocumentId: payload.mealId
-          }
-          if (payload.items !== undefined) minimal.items = payload.items
-          if (payload.notes !== undefined) minimal.notes = payload.notes
-          if (at) minimal.at = at
-          try {
-            const rMin = await api.post('/MealLog/edit', minimal)
-            return rMin.data as {}
-          } catch (e2: any) {
-            if ([400, 404, 422].includes(e2?.response?.status)) {
-              const ts = at ? Date.parse(at) : undefined
-              const alt: any = {
-                callerId: (payload as any).callerId,
-                ownerId: (payload as any).callerId,
-                owner: (payload as any).callerId,
-                requester: (payload as any).callerId,
-                mealId: payload.mealId,
-                id: payload.mealId,
-                _id: payload.mealId,
-                mealObjectId: payload.mealId,
-                mealDocumentId: payload.mealId,
-                ...(payload.items !== undefined ? { items: payload.items } : {}),
-                ...(payload.notes != null ? { notes: payload.notes } : {}),
-                ...(at ? { at } : {}),
-                ...(ts && !Number.isNaN(ts) ? { date: ts, timestamp: Math.floor(ts / 1000), newDate: ts, newTimestamp: Math.floor(ts / 1000), newAt: at, when: at, time: at } : {})
-              }
-              try {
-                const r2 = await api.post('/MealLog/edit', alt)
-                return r2.data as {}
-              } catch (e3: any) {
-                // Final fallback to underscore variant if available
-                const r3 = await api.post('/MealLog/_edit', alt)
-                return r3.data as {}
-              }
-            }
-            throw e2
-          }
-        }
+  // Spec-compliant: fetch logs for a specific date
+  getLogsForDate(payload: { user: string; date: string }) {
+    // Accept various date shapes; ensure ISO
+    const body: any = { user: payload.user }
+    try {
+      const ms = Date.parse(payload.date)
+      body.date = Number.isFinite(ms) ? new Date(ms).toISOString() : payload.date
+    } catch { body.date = payload.date }
+    return api.post('/MealLog/_getLogsForDate', body)
+      .then(r => r.data as any[])
+      .catch((e) => {
+        if (e?.response?.status === 404) return [] as any[]
         throw e
       })
   },
-  delete(payload: { callerId: string; mealId: string }) {
+  submit(payload: { owner: string; at: Date | string; items: Array<{ id: string; name: string }>; notes?: string }) {
+    // Backend expects exact keys: owner (User), at (Date), items (FoodItem[]), notes?
+    // Ensure 'at' is a Date object the server can parse reliably.
+    const atDate = (payload.at instanceof Date) ? payload.at : new Date(payload.at)
+    const body = {
+      owner: payload.owner,
+      at: atDate,
+      items: payload.items.map(it => ({ id: it.id, name: it.name })),
+      ...(payload.notes ? { notes: payload.notes } : {})
+    }
+    return api.post('/MealLog/submit', body).then(r => {
+      const d: any = r.data
+      // Backend returns { meal }
+      const mealId = d?.meal
+      return { mealId: mealId ? String(mealId) : '' } as { mealId: string }
+    })
+  },
+  edit(payload: { caller: string; meal: string; at?: Date | string; items?: Array<{ id: string; name: string }>; notes?: string }) {
+    const body: any = {
+      caller: payload.caller,
+      meal: payload.meal,
+      ...(payload.items ? { items: payload.items.map(it => ({ id: it.id, name: it.name })) } : {}),
+      ...(payload.notes ? { notes: payload.notes } : {}),
+      ...(payload.at ? { at: (payload.at instanceof Date) ? payload.at : new Date(payload.at) } : {})
+    }
+    return api.post('/MealLog/edit', body).then(r => r.data as {})
+  },
+  delete(payload: { caller: string; meal: string }) {
     return api.post('/MealLog/delete', payload).then(r => r.data as {})
   },
-  getMealsForOwner(payload: { ownerId: string; includeDeleted?: boolean }) {
-    return api.post('/MealLog/getMealsForOwner', payload)
+  getMealsForOwner(payload: { owner: string; includeDeleted?: boolean }) {
+    const body: any = { owner: payload.owner, includeDeleted: payload.includeDeleted === true }
+    return api.post('/MealLog/_getMealsByOwner', body)
       .then(r => r.data as any)
       .catch(async (e) => {
         if (e?.response?.status === 404) {
-          // Try underscore variant as fallback
-          const r2 = await api.post('/MealLog/_getMealsForOwner', payload)
-          return r2.data as any
+          // Try legacy underscore naming variants
+          const fallbacks = ['/MealLog/_getMealsForOwner','/MealLog/_getMealOwner']
+          for (const url of fallbacks) {
+            try { const r2 = await api.post(url, body); return r2.data as any } catch (e2: any) {
+              if (![400,404,422].includes(e2?.response?.status)) throw e2
+            }
+          }
+          return [] as any[]
         }
         throw e
       })
   },
-  getMealById(payload: { mealId: string; callerId: string }) {
-    return api.post('/MealLog/getMealById', payload)
+  getMealById(payload: { meal: string }) {
+    const body: any = { meal: payload.meal }
+    return api.post('/MealLog/_getMealById', body)
       .then(r => r.data as any)
       .catch(async (e) => {
         if (e?.response?.status === 404) {
           // Try underscore/object variant fallback
-          const r2 = await api.post('/MealLog/_getMealObjectById', { mealObjectId: payload.mealId })
+          const r2 = await api.post('/MealLog/_getMealObjectById', { mealObjectId: payload.meal })
           return r2.data as any
         }
         throw e
@@ -537,21 +497,33 @@ export const PersonalQAAPI = {
     return run()
   },
   ask(payload: { requester: string; question: string }) {
-    // Match docs exactly: only requester and question
-    const body = {
+    // Send aliases for compatibility
+    const body: any = {
       requester: payload.requester,
+      owner: payload.requester,
+      user: payload.requester,
       question: (payload.question || '').trim()
     }
     const run = async () => {
       // Prefer underscore variant first in case primary path aggregates other sources server-side
       try {
         const r2 = await api.post('/PersonalQA/_ask', body)
-        return r2.data as { answer: string }
+  const d: any = r2.data
+  const qa = d?.qa ?? d
+  const ans = qa?.answer ?? d?.answer ?? d?.text ?? d?.output ?? d?.result?.answer
+        if (typeof d?.error === 'string' && d.error) throw new Error(d.error)
+        if (!ans || String(ans).trim() === '') throw new Error('Empty answer')
+        return { answer: String(ans) } as { answer: string }
       } catch (eUnderscore: any) {
         if (![400,404,422,500].includes(eUnderscore?.response?.status)) throw eUnderscore
         // Fallback to primary
         const r = await api.post('/PersonalQA/ask', body)
-        return r.data as { answer: string }
+  const d: any = r.data
+  const qa = d?.qa ?? d
+  const ans = qa?.answer ?? d?.answer ?? d?.text ?? d?.output ?? d?.result?.answer
+        if (typeof d?.error === 'string' && d.error) throw new Error(d.error)
+        if (!ans || String(ans).trim() === '') throw new Error('Empty answer')
+        return { answer: String(ans) } as { answer: string }
       }
     }
     return run()
@@ -559,6 +531,8 @@ export const PersonalQAAPI = {
   askLLM(payload: { requester: string; question: string; k?: number; model?: string }) {
     const body: any = {
       requester: payload.requester,
+      owner: payload.requester,
+      user: payload.requester,
       question: (payload.question || '').trim()
     }
     if (payload.k != null) body.k = payload.k
@@ -577,7 +551,12 @@ export const PersonalQAAPI = {
       for (const url of endpoints) {
         try {
           const r = await api.post(url, body)
-          return r.data as { answer: string; citedFacts?: string[]; confidence?: number }
+          const d: any = r.data
+          if (typeof d?.error === 'string' && d.error) throw new Error(d.error)
+          const qa = d?.qa ?? d
+          const ans = qa?.answer ?? d?.answer ?? d?.text ?? d?.output ?? d?.result?.answer
+          if (!ans || String(ans).trim() === '') throw new Error('Empty answer')
+          return { answer: String(ans), citedFacts: qa?.citedFacts ?? d?.citedFacts, confidence: qa?.confidence ?? d?.confidence } as { answer: string; citedFacts?: string[]; confidence?: number }
         } catch (e: any) {
           lastErr = e
           if (![400,404,422,500].includes(e?.response?.status)) throw e
@@ -591,6 +570,30 @@ export const PersonalQAAPI = {
       throw lastErr
     }
     return run()
+  },
+  setTemplate(payload: { requester: string; name: string; template: string }) {
+    const body: any = {
+      requester: payload.requester,
+      owner: payload.requester,
+      name: payload.name,
+      template: payload.template
+    }
+    return api.post('/PersonalQA/setTemplate', body).then(r => r.data as {})
+  },
+  getUserDrafts(payload: { owner: string }) {
+    const body: any = { owner: payload.owner, requester: payload.owner }
+    return api.post('/PersonalQA/_getUserDrafts', body).then(r => {
+      const d: any = r.data
+      const arr = Array.isArray(d) ? d : (d ? [d] : [])
+      return arr.map((x: any) => ({
+        question: x?.question ?? x?.q ?? '',
+        answer: x?.answer ?? x?.a ?? undefined,
+        draft: x?.draft ?? true,
+        at: x?.at ?? x?.timestamp ?? x?.time,
+        citedFacts: x?.citedFacts ?? x?.facts,
+        confidence: x?.confidence
+      })) as Array<{ question: string; answer?: string; draft?: boolean; at?: string; citedFacts?: any; confidence?: number }>
+    })
   },
   getUserFacts(payload: { owner: string }) {
     const normalize = (item: any) => {

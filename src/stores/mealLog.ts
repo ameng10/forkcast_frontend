@@ -10,7 +10,7 @@ export type MealSummary = { mealId: string; at?: string | number; items?: MealIt
 function normalizeMealTime(obj: any): number | undefined {
   if (!obj) return undefined
   // Precedence order: explicit meal time first (string ISO-like), then ms fields, then seconds fields.
-  const stringFields = [obj.newAt, obj.at, obj.time, obj.when]
+  const stringFields = [obj.newAt, obj.at, obj.time, obj.when, (typeof obj.timestamp === 'string' ? obj.timestamp : undefined)]
   for (const v of stringFields) {
     if (typeof v === 'string') {
       const p = Date.parse(v)
@@ -67,34 +67,58 @@ export const useMealLogStore = defineStore('mealLog', {
     saveOverrides() {
       try { localStorage.setItem('mealLog_timeOverrides', JSON.stringify(this.timeOverrides)) } catch {}
     },
-    async listForOwner(includeDeleted?: boolean) {
+  async listForOwner(includeDeleted?: boolean) {
       const auth = useAuthStore()
       if (!auth.ownerId) throw new Error('ownerId not set')
       this.loading = true
       this.error = null
       try {
-        const res = await MealLogAPI.getMealsForOwner({ ownerId: auth.ownerId, includeDeleted: includeDeleted ?? this.includeDeleted })
+    let res: any = await MealLogAPI.getMealsForOwner({ owner: auth.ownerId, includeDeleted: includeDeleted ?? this.includeDeleted })
+  // If result is empty array or empty object/null, attempt spec-compliant fallback: fetch last 7 days via _getLogsForDate
+  const isEmptyObject = res && typeof res === 'object' && !Array.isArray(res) && Object.keys(res).length === 0
+  if ((Array.isArray(res) && res.length === 0) || !res || isEmptyObject) {
+          const today = new Date()
+          const collected: any[] = []
+          for (let i = 0; i < 7; i++) {
+            const d = new Date(today.getTime() - i * 86400000)
+            const isoDate = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString()
+            try {
+        const dayLogs = await MealLogAPI.getLogsForDate({ user: auth.ownerId, date: isoDate })
+              if (Array.isArray(dayLogs) && dayLogs.length) collected.push(...dayLogs)
+            } catch {}
+          }
+          if (collected.length) res = collected
+        }
         const toSummary = (x: any): MealSummary => {
           if (x == null) return { mealId: '' }
           if (typeof x === 'string') return { mealId: x }
-          const mealId = String(x.mealId || x.id || x._id || x.mealObjectId || x.mealDocumentId || '')
-          let at = normalizeMealTime(x)
+      // Backend list shape: { meal: MealDocument }
+          const doc = x.meal ? x.meal : x
+      const mealId = String(doc?.mealId || doc?._id || doc?.meal || doc?.id || '')
+          let at = normalizeMealTime(doc)
           // Prefer optimistic pending/override unconditionally to avoid snap-back while server catches up
           const p = this.pendingTimes[mealId]
           if (typeof p === 'number') at = p
           const ov = this.timeOverrides[mealId]
           if (typeof ov === 'number') at = ov
-          const items = Array.isArray(x.items) ? x.items as MealItem[] : undefined
+          // Spec items: [{ foodItem, name, quantity }]; map to existing MealItem shape preserving ids
+          let items: MealItem[] | undefined
+          if (Array.isArray(doc?.items)) {
+            const mapped = doc.items
+              .map((it: any) => {
+                const nameVal = typeof it?.name === 'string' && it.name.trim() ? it.name.trim() : undefined
+                const idSrc = (typeof it?.id === 'string' && it.id.trim()) ? it.id.trim() : (typeof it?.foodItem === 'string' && it.foodItem.trim() ? it.foodItem.trim() : undefined)
+                const finalId = idSrc || nameVal
+                if (!finalId) return null
+                return { id: String(finalId), name: String(nameVal || finalId), quantity: it.quantity }
+              })
+              .filter(Boolean) as MealItem[]
+            items = mapped
+          }
           return { mealId, at, items }
         }
         let summaries: MealSummary[] = []
-        if (Array.isArray(res)) {
-          summaries = (res as any[]).map(toSummary)
-        } else if (res && Array.isArray((res as any).mealIds)) {
-          summaries = ((res as any).mealIds as any[]).map(toSummary)
-        } else if (res && typeof res === 'object') {
-          summaries = Object.values(res as Record<string, any>).map(toSummary)
-        }
+    if (Array.isArray(res)) summaries = res.map(toSummary)
         // Sort by time desc if available
         this.meals = summaries
           .filter(s => !!s.mealId)
@@ -119,17 +143,18 @@ export const useMealLogStore = defineStore('mealLog', {
         this.error = e?.message ?? 'Failed to load meals'
       } finally { this.loading = false }
     },
-    async fetchById(mealId: string, expectedAtMs?: number) {
+  async fetchById(mealId: string, expectedAtMs?: number) {
       const auth = useAuthStore()
       if (!auth.ownerId) throw new Error('ownerId not set')
       this.loading = true
       this.error = null
       try {
-        const rec = await MealLogAPI.getMealById({ mealId, callerId: auth.ownerId })
-        // Some backends wrap in array for queries
-        const body = Array.isArray(rec) ? (rec[0] ?? {}) : (rec || {})
+    const rec = await MealLogAPI.getMealById({ meal: mealId })
+    // Backend returns array of { meal: MealDocument }
+    const bodyWrap = Array.isArray(rec) ? (rec[0] ?? {}) : (rec || {})
+    const doc = bodyWrap.meal ? bodyWrap.meal : bodyWrap
         // Normalize time fields for current record (pick the newest across aliases)
-        const serverAt = normalizeMealTime(body)
+    const serverAt = normalizeMealTime(doc)
         let at = serverAt
         // Prefer expected/pending time unconditionally for stability
         const p = expectedAtMs ?? this.pendingTimes[mealId]
@@ -144,20 +169,30 @@ export const useMealLogStore = defineStore('mealLog', {
           if (this.timeOverrides[mealId]) { delete this.timeOverrides[mealId]; this.saveOverrides() }
           at = serverAt
         }
-        this.current = { mealId, ...(body || {}), ...(at != null ? { at } : {}) }
+    this.current = { mealId, ...(doc || {}), ...(at != null ? { at } : {}) }
         return this.current
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to fetch meal'
         throw e
       } finally { this.loading = false }
     },
-    async submit(at: string, items: MealItem[], notes?: string) {
+  async submit(at: string, items: MealItem[], notes?: string) {
       const auth = useAuthStore()
       if (!auth.ownerId) throw new Error('ownerId not set')
       this.loading = true
       this.error = null
       try {
-        const { mealId } = await MealLogAPI.submit({ ownerId: auth.ownerId, at, items, notes })
+    // Map MealItem[] (with synthetic type item) to backend FoodItem[] (exclude type item)
+        const foodItems = items
+          .map(it => {
+            const nameVal = typeof it.name === 'string' && it.name.trim() ? it.name.trim() : undefined
+            const idSrc = (typeof it.id === 'string' && it.id.trim()) ? it.id.trim() : (nameVal ? nameVal : undefined)
+            if (!idSrc) return null
+            return { id: idSrc, name: String(nameVal || idSrc) }
+          })
+          .filter(Boolean) as Array<{ id: string; name: string }>
+    const atDate = new Date(at)
+    const { mealId } = await MealLogAPI.submit({ owner: auth.ownerId, at: atDate, items: foodItems, notes })
         await this.listForOwner()
         return mealId
       } catch (e: any) {
@@ -190,7 +225,18 @@ export const useMealLogStore = defineStore('mealLog', {
         if (idx >= 0) this.meals[idx].at = ts
       }
     }
-    await MealLogAPI.edit({ callerId: auth.ownerId, mealId, ...(effItems !== undefined ? { items: effItems } : {}), ...(effNotes !== undefined ? { notes: effNotes } : {}), ...(at ? { at } : {}) })
+        const mapped = effItems
+          ? (effItems
+              .map(it => {
+                const nameVal = typeof it.name === 'string' && it.name.trim() ? it.name.trim() : undefined
+                const idSrc = (typeof it.id === 'string' && it.id.trim()) ? it.id.trim() : (nameVal ? nameVal : undefined)
+                if (!idSrc) return null
+                return { id: idSrc, name: String(nameVal || idSrc) }
+              })
+              .filter(Boolean) as Array<{ id: string; name: string }>)
+          : undefined
+  const atMaybe = at ? new Date(at) : undefined
+  await MealLogAPI.edit({ caller: auth.ownerId, meal: mealId, ...(mapped ? { items: mapped } : {}), ...(effNotes !== undefined ? { notes: effNotes } : {}), ...(atMaybe ? { at: atMaybe } : {}) })
   // Pass expected time so fetch won't revert visually
   await this.fetchById(mealId, expected)
   // Retry briefly if server hasn't reflected new time yet
@@ -237,7 +283,7 @@ export const useMealLogStore = defineStore('mealLog', {
       this.loading = true
       this.error = null
       try {
-        await MealLogAPI.delete({ callerId: auth.ownerId, mealId })
+  await MealLogAPI.delete({ caller: auth.ownerId, meal: mealId })
         if (this.current?.mealId === mealId) this.current = null
   if (this.pendingTimes[mealId]) delete this.pendingTimes[mealId]
   if (this.timeOverrides[mealId]) { delete this.timeOverrides[mealId]; this.saveOverrides() }
