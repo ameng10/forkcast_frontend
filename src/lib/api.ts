@@ -1,12 +1,12 @@
 import axios from 'axios'
 import { useAuthStore } from '../stores/auth'
-
-const BASE_URL = typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL
-  ? import.meta.env.VITE_API_BASE_URL
-  : '/api'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+// const BASE_URL = typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL
+//   ? import.meta.env.VITE_API_BASE_URL
+//   : '/api'
 
 export const api = axios.create({
-  baseURL: BASE_URL,
+  baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
   withCredentials: false,
   timeout: 15000
