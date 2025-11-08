@@ -2,14 +2,8 @@
   <section>
     <h2>Meal Log</h2>
 
-    <div class="auth-box">
-      <label>
-        User:
-        <input v-model.trim="owner" placeholder="e.g. alice" />
-      </label>
-  <button @click="saveOwner" :disabled="!owner" style="margin-left:16px;">Use User</button>
-  <button @click="clearOwner" v-if="auth.ownerId" style="margin-left:16px;">Clear</button>
-      <p v-if="auth.ownerId">Active User: <strong>{{ ownerLabel }}</strong></p>
+    <div class="auth-box" v-if="!auth.userId">
+      <p>Please <router-link to="/auth">login or register</router-link> to log meals.</p>
     </div>
 
     <div class="grid grid-3">
@@ -192,7 +186,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, watchEffect, nextTick } from 'vue'
+import { ref, computed, watch, watchEffect, nextTick, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useMealLogStore, type MealItem, type MealSummary } from '../stores/mealLog'
 
@@ -203,9 +197,7 @@ function stripOwner(id?: string | null) {
   const s = (id || '').trim()
   return s.startsWith('user:') ? s.slice(5) : s
 }
-const owner = ref(stripOwner(auth.ownerId))
 const ownerLabel = computed(() => stripOwner(auth.ownerId))
-watch(() => auth.ownerId, (id) => { owner.value = stripOwner(id) })
 
 // Submit form state
 const dateLocal = ref(toLocalDate(new Date()))
@@ -215,7 +207,7 @@ const mealType = ref<'Breakfast' | 'Lunch' | 'Snacks' | 'Dinner'>('Lunch')
 const foods = ref<string[]>(['Apple'])
 const notes = ref('')
 const timePeriod = computed<'AM'|'PM'>(() => getPeriodFromTime(timeLocal.value))
-const canSubmit = computed(() => !!auth.ownerId && !!dateLocal.value && !!timeLocal.value && foods.value.filter(s => s.trim()).length > 0)
+const canSubmit = computed(() => !!auth.session && !!dateLocal.value && !!timeLocal.value && foods.value.filter(s => s.trim()).length > 0)
 const submitOk = ref(false)
 
 function addFood() { foods.value.push('') }
@@ -250,7 +242,9 @@ async function submitMeal() {
     if (id) {
       editMealId.value = id
       submitOk.value = true
-  await ml.fetchById(id)
+  // Avoid an extra network call; set current from local submission data
+  const atMs = Date.parse(atIso)
+  ml.current = { mealId: id, at: isNaN(atMs) ? atIso : atMs, items: composed, notes: notes.value || undefined } as any
     }
   } catch {}
 }
@@ -317,24 +311,18 @@ async function performDelete() {
   await ml.remove(editMealId.value)
 }
 
-function saveOwner() {
-  auth.setSession(owner.value)
-  refreshMeals()
-}
-function clearOwner() {
-  auth.clear()
-}
-function refreshMeals() {
-  if (auth.ownerId) ml.listForOwner()
-}
-
+// Keep meals synced when session changes while on this page
 watch(
-  () => auth.ownerId,
-  (id) => {
-    if (id) ml.listForOwner()
-  },
-  { immediate: true }
+  () => auth.session,
+  (s) => {
+    if (s) ml.listForSession(undefined, false)
+  }
 )
+
+// Always refresh the meal list when navigating to the Meals page
+onMounted(() => {
+  if (auth.session) ml.listForSession(undefined, true)
+})
 
 async function selectMeal(id: string) {
   editMealId.value = id

@@ -2,16 +2,6 @@
   <section class="pqa">
     <h2>Personal Q&A</h2>
 
-    <div class="auth-box">
-      <label>
-        User:
-        <input v-model.trim="owner" placeholder="e.g. alice" />
-      </label>
-      <button @click="saveOwner" :disabled="!owner">Use User</button>
-      <button @click="clearOwner" v-if="auth.ownerId">Clear</button>
-      <p v-if="auth.ownerId">Active User: <strong>{{ ownerLabel }}</strong></p>
-    </div>
-
     <div class="chat-grid">
       <div class="chat-card">
         <div class="chat-header">
@@ -62,19 +52,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { usePersonalQAStore } from '../stores/personalQA'
 
 const auth = useAuthStore()
 const pqa = usePersonalQAStore()
-
-function stripOwner(id?: string | null) {
-  const s = (id || '').trim()
-  return s.startsWith('user:') ? s.slice(5) : s
-}
-const owner = ref(stripOwner(auth.ownerId))
-const ownerLabel = computed(() => stripOwner(auth.ownerId))
 const newFact = ref('')
 const question = ref('')
 const chatWindow = ref<HTMLDivElement | null>(null)
@@ -83,14 +66,10 @@ const canAddFact = ref(false)
 watch(newFact, (v) => { canAddFact.value = !!v && v.length > 0 })
 
 function saveOwner() {
-  auth.setSession(owner.value)
-  pqa.resetChat()
-  pqa.refreshFacts()
+  // removed user textbox; auth handled elsewhere
 }
 function clearOwner() {
-  auth.clear()
-  pqa.resetChat()
-  owner.value = ''
+  // removed user textbox; auth handled elsewhere
 }
 
 async function addFact() {
@@ -129,16 +108,13 @@ watch(() => pqa.messages.length, () => {
   scrollToBottom()
 })
 
-watch(() => auth.ownerId, (id) => {
-  owner.value = stripOwner(id)
-  if (id) { pqa.resetChat(); pqa.refreshFacts() }
+watch(() => [auth.session, auth.ownerId] as const, ([session, owner]) => {
+  if (session && owner) { pqa.resetChat(); pqa.refreshFacts() }
 }, { immediate: true })
 </script>
 
 <style scoped>
 .pqa { display:flex; flex-direction:column; gap:16px; }
-.auth-box { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:16px; }
-.auth-box input { min-width:220px; }
 .chat-grid { display:grid; grid-template-columns: 2fr 1fr; gap:20px; align-items:start; }
 @media (max-width: 960px) { .chat-grid { grid-template-columns: 1fr; } }
 .chat-card { border:1px solid var(--border); border-radius:12px; padding:16px; display:flex; flex-direction:column; gap:12px; background:var(--surface); min-height:420px; }

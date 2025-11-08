@@ -80,10 +80,17 @@ import { ref, onMounted, computed, watchEffect } from 'vue'
 import { useQuickCheckInsStore } from '../stores/quickCheckIns'
 
 const groupByDay = ref(false)
+// Metric filter lives client-side to avoid unnecessary server refreshes
+const metricFilter = ref('')
 const groupedCheckIns = computed(() => {
-  if (!groupByDay.value) return [{ day: null, items: store.checkIns }]
+  const base = store.checkIns.filter(ci => {
+    const f = metricFilter.value.trim()
+    if (!f) return true
+    return (ci.metricName || '').toLowerCase() === f.toLowerCase()
+  })
+  if (!groupByDay.value) return [{ day: null, items: base }]
   const groups = new Map<string, any[]>()
-  for (const ci of store.checkIns) {
+  for (const ci of base) {
     const d = ci.timestamp ? new Date(ci.timestamp) : (ci.at ? new Date(ci.at) : new Date())
     const key = isNaN(d.getTime()) ? 'Unknown' : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
   if (!groups.has(key)) groups.set(key, [])
@@ -103,8 +110,6 @@ async function onDeleteMetric(metricId: string) {
   // Keep the popup open; list will update reactively
 }
 onMounted(() => { store.hydrateAllMetrics().catch(() => {}) })
-
-const metricFilter = ref('')
 const editingId = ref<string | null>(null)
 const editValue = ref<number | null>(null)
 const editAt = ref<string | null>(null)
@@ -118,16 +123,14 @@ function shorten(id?: string) {
   if (!id) return undefined
   return id.length > 10 ? id.slice(0, 6) + '…' + id.slice(-4) : id
 }
-async function applyFilter() {
-  await store.listCheckIns({ metricName: metricFilter.value })
+function applyFilter() {
+  // client-side only; server list updates are triggered on navigation and mutations (record/edit/delete)
 }
-async function clearFilter() {
+function clearFilter() {
   metricFilter.value = ''
-  await store.listCheckIns({ metricName: '' })
 }
-async function setMetric(name?: string) {
+function setMetric(name?: string) {
   metricFilter.value = name ?? ''
-  await store.listCheckIns({ metricName: metricFilter.value })
 }
 function startEdit(id: string, value: number) {
   editingId.value = id

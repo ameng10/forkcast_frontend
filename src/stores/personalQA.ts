@@ -20,7 +20,7 @@ export const usePersonalQAStore = defineStore('personalQA', {
 
     // Minimal preflight: ensure no broken facts (null/blank text or null source) remain server-side
     async sanitizeFacts() {
-      const auth = useAuthStore(); if (!auth.ownerId) return
+      const auth = useAuthStore(); if (!auth.session || !auth.ownerId) return
       try {
         const facts = await PersonalQAAPI.getUserFacts({ owner: auth.ownerId }) as Array<{ factId: string; fact: string; source?: string }>
         for (const f of (facts || [])) {
@@ -72,7 +72,7 @@ export const usePersonalQAStore = defineStore('personalQA', {
     },
 
     async refreshFacts() {
-      const auth = useAuthStore(); if (!auth.ownerId) throw new Error('ownerId not set')
+      const auth = useAuthStore(); if (!auth.session || !auth.ownerId) throw new Error('Invalid or expired session.')
       this.loading = true; this.error = null
       try {
         const list = await PersonalQAAPI.getUserFacts({ owner: auth.ownerId })
@@ -97,7 +97,7 @@ export const usePersonalQAStore = defineStore('personalQA', {
 
   async ingestFact(text: string) {
       const auth = useAuthStore(); const t = (text || '').trim()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+      if (!auth.session || !auth.ownerId) throw new Error('Invalid or expired session.')
       if (!t) throw new Error('Fact cannot be empty')
       this.loading = true; this.error = null
       try {
@@ -115,7 +115,7 @@ export const usePersonalQAStore = defineStore('personalQA', {
     },
 
     async forgetFact(factId: string) {
-      const auth = useAuthStore(); if (!auth.ownerId) throw new Error('ownerId not set')
+      const auth = useAuthStore(); if (!auth.session || !auth.ownerId) throw new Error('Invalid or expired session.')
       this.loading = true; this.error = null
       try {
   this.facts = this.facts.filter(f => f.factId !== factId)
@@ -127,7 +127,7 @@ export const usePersonalQAStore = defineStore('personalQA', {
     },
 
     async ask(question: string): Promise<string> {
-      const auth = useAuthStore(); if (!auth.ownerId) throw new Error('ownerId not set')
+      const auth = useAuthStore(); if (!auth.session || !auth.ownerId) throw new Error('Invalid or expired session.')
       const q = (question || '').trim(); if (!q) throw new Error('Question cannot be empty')
       if (this.asking) return ''
       this.asking = true; this.error = null

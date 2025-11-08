@@ -2,14 +2,8 @@
   <section>
     <h2>Quick Check-Ins</h2>
 
-    <div class="auth-box">
-      <label>
-        User:
-        <input v-model.trim="owner" placeholder="e.g. alice" />
-      </label>
-      <button @click="saveOwner" :disabled="!owner">Use User</button>
-      <button @click="clearOwner" v-if="auth.ownerId">Clear</button>
-      <p v-if="auth.ownerId">Active User: <strong>{{ ownerLabel }}</strong></p>
+    <div class="auth-box" v-if="!auth.userId">
+      <p>Please <router-link to="/auth">login or register</router-link> to continue.</p>
     </div>
 
     <div class="grid grid-3">
@@ -48,7 +42,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, watchEffect, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useQuickCheckInsStore } from '../stores/quickCheckIns'
 import QuickCheckInsList from '../components/QuickCheckInsList.vue'
@@ -59,30 +53,6 @@ const auth = useAuthStore()
 const qci = useQuickCheckInsStore()
 const listRef = ref<InstanceType<typeof QuickCheckInsList> | null>(null)
 const presetMetric = ref<string | undefined>(undefined)
-
-function stripOwner(id?: string | null) {
-  const s = (id || '').trim()
-  return s.startsWith('user:') ? s.slice(5) : s
-}
-const owner = ref(stripOwner(auth.ownerId))
-watch(() => auth.ownerId, (id) => { owner.value = stripOwner(id) })
-const ownerLabel = computed(() => {
-  const id = auth.ownerId || ''
-  return id.startsWith('user:') ? id.slice(5) : id
-})
-
-function saveOwner() {
-  auth.setSession(owner.value)
-  refreshList()
-}
-function clearOwner() {
-  auth.clear()
-}
-function refreshList() {
-  if (auth.ownerId) {
-    qci.listCheckIns()
-  }
-}
 
 function onRecorded(payload: { metricName: string }) {
   // Refresh and focus on that metric
@@ -111,15 +81,13 @@ function selectMetric(name?: string) {
   listRef.value?.setMetric(name)
 }
 
-watchEffect(() => {
-  if (auth.ownerId && qci.checkIns.length === 0) {
-    qci.listCheckIns()
-  }
-})
-
 onMounted(() => {
-  // Ensure defined metrics are hydrated for the right-side list
-  qci.hydrateAllMetrics().catch(() => {})
+  // Hydrate metrics once for the right-side list
+  qci.hydrateAllMetrics(false).catch(() => {})
+  // Explicit initial list load (navigation to page). Force ensures _listCheckInsByOwner attempted first.
+  if (auth.session) {
+    qci.listCheckIns({ force: true })
+  }
 })
 </script>
 

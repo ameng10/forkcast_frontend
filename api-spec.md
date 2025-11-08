@@ -1149,3 +1149,218 @@
 }
 ```
 ---
+
+# API Specification: UserAuthentication Concept
+
+**Purpose:** To securely verify a user's identity based on credentials.
+
+***
+
+## API Endpoints
+
+### POST /api/UserAuthentication/register
+
+**Description:** Creates a new user account with a unique username and password.
+
+**Requirements:**
+- No user exists with the given `username`.
+
+**Effects:**
+- Creates a new User `u`.
+- Sets the new user's `username` and a hash of their `password`.
+- Returns the ID of the new user `u` as `user`.
+- If a user with the given `username` already exists, returns an error message.
+
+**Request Body:**
+```json
+{
+  "username": "string",
+  "password": "string"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "user": "UserID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+---
+### POST /api/UserAuthentication/login
+
+**Description:** Authenticates a user with their username and password.
+
+**Requirements:**
+- A user exists with the given `username`.
+- The provided `password` matches the user's stored password hash.
+
+**Effects:**
+- Returns the matching user's ID.
+- If no user exists with the `username` or the `password` does not match, returns an error message.
+
+**Request Body:**
+```json
+{
+  "username": "string",
+  "password": "string"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "user": "UserID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+---
+### POST /api/UserAuthentication/_getUserByUsername
+
+**Description:** Retrieves a user's ID by their username.
+
+**Requirements:**
+- A user with the given `username` must exist.
+
+**Effects:**
+- Returns the corresponding user's ID.
+
+**Request Body:**
+```json
+{
+  "username": "string"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "user": "UserID"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+***
+
+# API Specification: Sessioning Concept
+
+**Purpose:** To maintain a user's logged-in state across multiple requests without re-sending credentials.
+
+***
+
+## API Endpoints
+
+### POST /api/Sessioning/create
+
+**Description:** Creates a new session for an authenticated user.
+
+**Requirements:**
+- A valid `user` ID must be provided.
+
+**Effects:**
+- Creates a new session `s`.
+- Associates the new session with the given `user`.
+- Returns the new session ID `s` as `session`.
+
+**Request Body:**
+```json
+{
+  "user": "UserID"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{
+  "session": "SessionID"
+}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+---
+### POST /api/Sessioning/delete
+
+**Description:** Deletes a session, effectively logging a user out.
+
+**Requirements:**
+- The given `session` ID must exist.
+
+**Effects:**
+- Removes the specified session `s`.
+
+**Request Body:**
+```json
+{
+  "session": "SessionID"
+}
+```
+
+**Success Response Body (Action):**
+```json
+{}
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+---
+### POST /api/Sessioning/_getUser
+
+**Description:** Retrieves the user associated with a given session.
+
+**Requirements:**
+- The given `session` ID must exist.
+
+**Effects:**
+- Returns the user ID associated with the session.
+
+**Request Body:**
+```json
+{
+  "session": "SessionID"
+}
+```
+
+**Success Response Body (Query):**
+```json
+[
+  {
+    "user": "UserID"
+  }
+]
+```
+
+**Error Response Body:**
+```json
+{
+  "error": "string"
+}
+```
+---

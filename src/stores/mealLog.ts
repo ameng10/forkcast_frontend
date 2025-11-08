@@ -67,13 +67,15 @@ export const useMealLogStore = defineStore('mealLog', {
     saveOverrides() {
       try { localStorage.setItem('mealLog_timeOverrides', JSON.stringify(this.timeOverrides)) } catch {}
     },
-  async listForOwner(includeDeleted?: boolean) {
+  initialized: false,
+  async listForSession(includeDeleted?: boolean, force?: boolean) {
       const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+      if (!auth.session) throw new Error('session not set')
+      if (this.initialized && !force) return
       this.loading = true
       this.error = null
       try {
-    let res: any = await MealLogAPI.getMealsForOwner({ owner: auth.ownerId, includeDeleted: includeDeleted ?? this.includeDeleted })
+    let res: any = await MealLogAPI.getMealsSession({ session: auth.session, includeDeleted: includeDeleted ?? this.includeDeleted })
   // If result is empty array or empty object/null, attempt spec-compliant fallback: fetch last 7 days via _getLogsForDate
   const isEmptyObject = res && typeof res === 'object' && !Array.isArray(res) && Object.keys(res).length === 0
   if ((Array.isArray(res) && res.length === 0) || !res || isEmptyObject) {
@@ -83,13 +85,13 @@ export const useMealLogStore = defineStore('mealLog', {
             const d = new Date(today.getTime() - i * 86400000)
             const isoDate = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString()
             try {
-        const dayLogs = await MealLogAPI.getLogsForDate({ user: auth.ownerId, date: isoDate })
+        const dayLogs = await MealLogAPI.getLogsForDate({ user: auth.ownerId || auth.userId || '', date: isoDate })
               if (Array.isArray(dayLogs) && dayLogs.length) collected.push(...dayLogs)
             } catch {}
           }
           if (collected.length) res = collected
         }
-        const toSummary = (x: any): MealSummary => {
+  const toSummary = (x: any): MealSummary => {
           if (x == null) return { mealId: '' }
           if (typeof x === 'string') return { mealId: x }
       // Backend list shape: { meal: MealDocument }
@@ -117,8 +119,12 @@ export const useMealLogStore = defineStore('mealLog', {
           }
           return { mealId, at, items }
         }
-        let summaries: MealSummary[] = []
-    if (Array.isArray(res)) summaries = res.map(toSummary)
+        // Normalize list: server returns { meals: [...] }
+        const arr = Array.isArray(res)
+          ? res
+          : (Array.isArray(res?.meals) ? res.meals
+            : (Array.isArray(res?.data) ? res.data : []))
+        let summaries: MealSummary[] = arr.map(toSummary)
         // Sort by time desc if available
         this.meals = summaries
           .filter(s => !!s.mealId)
@@ -141,15 +147,19 @@ export const useMealLogStore = defineStore('mealLog', {
         }
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to load meals'
-      } finally { this.loading = false }
+  } finally { this.loading = false; this.initialized = true }
     },
+  // Backward-compatible alias used by other pages (WeeklySummaryPage etc.)
+  async listForOwner(includeDeleted?: boolean, force?: boolean) {
+    return this.listForSession(includeDeleted, force)
+  },
   async fetchById(mealId: string, expectedAtMs?: number) {
       const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+      if (!auth.session) throw new Error('session not set')
       this.loading = true
       this.error = null
       try {
-    const rec = await MealLogAPI.getMealById({ meal: mealId })
+    const rec = await MealLogAPI.getMealById({ session: auth.session, meal: mealId })
     // Backend returns array of { meal: MealDocument }
     const bodyWrap = Array.isArray(rec) ? (rec[0] ?? {}) : (rec || {})
     const doc = bodyWrap.meal ? bodyWrap.meal : bodyWrap
@@ -178,7 +188,7 @@ export const useMealLogStore = defineStore('mealLog', {
     },
   async submit(at: string, items: MealItem[], notes?: string) {
       const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+      if (!auth.session) throw new Error('session not set')
       this.loading = true
       this.error = null
       try {
@@ -192,8 +202,10 @@ export const useMealLogStore = defineStore('mealLog', {
           })
           .filter(Boolean) as Array<{ id: string; name: string }>
     const atDate = new Date(at)
-    const { mealId } = await MealLogAPI.submit({ owner: auth.ownerId, at: atDate, items: foodItems, notes })
-        await this.listForOwner()
+  const { mealId } = await MealLogAPI.submit({ session: auth.session, at: atDate, items: foodItems, notes })
+        // Refresh list after new submission (force fetch)
+        this.initialized = false
+    await this.listForSession(undefined, true)
         return mealId
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to submit meal'
@@ -201,8 +213,8 @@ export const useMealLogStore = defineStore('mealLog', {
       } finally { this.loading = false }
     },
   async edit(mealId: string, items?: MealItem[], notes?: string, at?: string) {
-      const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+    const auth = useAuthStore()
+    if (!auth.session) throw new Error('session not set')
       this.loading = true
       this.error = null
       try {
@@ -236,7 +248,7 @@ export const useMealLogStore = defineStore('mealLog', {
               .filter(Boolean) as Array<{ id: string; name: string }>)
           : undefined
   const atMaybe = at ? new Date(at) : undefined
-  await MealLogAPI.edit({ caller: auth.ownerId, meal: mealId, ...(mapped ? { items: mapped } : {}), ...(effNotes !== undefined ? { notes: effNotes } : {}), ...(atMaybe ? { at: atMaybe } : {}) })
+  await MealLogAPI.edit({ session: auth.session, meal: mealId, ...(mapped ? { items: mapped } : {}), ...(effNotes !== undefined ? { notes: effNotes } : {}), ...(atMaybe ? { at: atMaybe } : {}) })
   // Pass expected time so fetch won't revert visually
   await this.fetchById(mealId, expected)
   // Retry briefly if server hasn't reflected new time yet
@@ -271,7 +283,9 @@ export const useMealLogStore = defineStore('mealLog', {
     }
   }
   // Refresh list so meal log reflects updated time and resort
-  await this.listForOwner()
+  // Force list refresh to capture potential resorting or new fields
+  this.initialized = false
+  await this.listForSession(undefined, true)
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to edit meal'
         throw e
@@ -279,15 +293,16 @@ export const useMealLogStore = defineStore('mealLog', {
     },
     async remove(mealId: string) {
       const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+      if (!auth.session) throw new Error('session not set')
       this.loading = true
       this.error = null
       try {
-  await MealLogAPI.delete({ caller: auth.ownerId, meal: mealId })
+  await MealLogAPI.delete({ session: auth.session, meal: mealId })
         if (this.current?.mealId === mealId) this.current = null
   if (this.pendingTimes[mealId]) delete this.pendingTimes[mealId]
   if (this.timeOverrides[mealId]) { delete this.timeOverrides[mealId]; this.saveOverrides() }
-        await this.listForOwner()
+  // Do not re-fetch full list; update local cache to reflect removal
+  this.meals = this.meals.filter(m => m.mealId !== mealId)
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to delete meal'
         throw e

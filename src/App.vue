@@ -5,12 +5,19 @@
         <img src="/forkcast-logo.png" alt="Forkcast logo" class="logo-img" />
       </h1>
       <nav>
-  <RouterLink to="/">Home</RouterLink>
-  <RouterLink to="/checkins">Quick Check-Ins</RouterLink>
-        <RouterLink to="/meals">Meals</RouterLink>
-        <RouterLink to="/qa">Personal Q&A</RouterLink>
-  <RouterLink to="/weekly">Weekly Summary</RouterLink>
+        <RouterLink to="/">Home</RouterLink>
+        <RouterLink v-if="!auth.userId" to="/auth">Sign In</RouterLink>
+        <template v-if="auth.userId">
+          <RouterLink to="/checkins">Quick Check-Ins</RouterLink>
+          <RouterLink to="/meals">Meals</RouterLink>
+          <RouterLink to="/qa">Personal Q&A</RouterLink>
+          <RouterLink to="/weekly">Weekly Summary</RouterLink>
+        </template>
       </nav>
+      <div class="user-box" v-if="auth.userId">
+        <span class="user-label">{{ auth.username }}</span>
+        <button class="logout-btn" @click="logout">Logout</button>
+      </div>
     </header>
     <main>
       <RouterView />
@@ -20,7 +27,9 @@
 </template>
 
 <script setup lang="ts">
-// No-op
+import { useAuthStore } from './stores/auth'
+const auth = useAuthStore()
+function logout() { auth.logout() }
 </script>
 
 <style>
@@ -80,10 +89,16 @@ body, html, #app {
 .app-header h1 { font-size: 18px; margin: 0; color: var(--text); font-family: 'Fredoka', 'Nunito', system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; font-weight: 600; letter-spacing: 0.2px; }
 .app-header h1.logo { display:flex; align-items:center; }
 .app-header .logo-img { height: 50px; display:block; }
+nav { display:flex; flex-wrap:wrap; align-items:center; }
 nav a { margin-right: 12px; text-decoration: none; color: var(--text-muted); padding: 6px 10px; border-radius: 8px; transition: background .15s, color .15s; }
 nav a.router-link-active { color: var(--surface); background: var(--brand-primary); }
 nav a:hover { background: rgba(56,167,0,0.08); color: var(--brand-primary-strong); }
 main { padding: 24px 20px 40px; max-width: 1440px; margin: 0 auto; }
+
+.user-box { margin-left:auto; display:flex; align-items:center; gap:8px; }
+.user-label { font-size:13px; font-weight:600; color: var(--brand-primary-strong); }
+.logout-btn { background: var(--brand-accent); border-color: var(--brand-accent); padding:6px 10px; font-size:12px; }
+.logout-btn:hover { background: var(--brand-accent-strong); border-color: var(--brand-accent-strong); }
 
 /* Global form controls */
 input, select, textarea { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 8px 10px; font: inherit; }

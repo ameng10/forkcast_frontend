@@ -8,20 +8,12 @@ export type CheckIn = { checkInId: string; metric?: string; metricName?: string;
 export const useQuickCheckInsStore = defineStore('quickCheckIns', {
   state: () => ({
     metricsByName: new Map<string, Metric[]>(),
-    allMetrics: ((): Metric[] => {
-      try {
-        const raw = localStorage.getItem('qc_allMetrics')
-        if (!raw) return []
-        const arr = JSON.parse(raw)
-        if (Array.isArray(arr)) return arr.filter(m => m && typeof m.metricId === 'string')
-      } catch {}
-      return []
-    })(),
+  allMetrics: [] as Metric[],
     checkIns: [] as CheckIn[],
     loading: false,
     error: null as string | null,
     selectedMetricId: null as string | null,
-  sortBy: 'time' as 'time' | 'metricName',
+    sortBy: 'time' as 'time' | 'metricName',
     pendingTimes: {} as Record<string, number>,
     timeOverrides: ((): Record<string, number> => {
       try {
@@ -39,9 +31,26 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
         if (obj && typeof obj === 'object') return obj
       } catch {}
       return {}
-    })()
+    })(),
+    initialized: false,
+    metricsInitialized: false,
+    _lastMetricsOwnerId: null as string | null
   }),
   actions: {
+    // New: per-user storage key + helpers
+    storageKeyFor(owner?: string | null) {
+      const id = owner || useAuthStore().ownerId || '__none__'
+      return `qc_allMetrics_${id}`
+    },
+    loadAllMetricsFromStorage() {
+      try {
+        const key = this.storageKeyFor()
+        const raw = localStorage.getItem(key)
+        if (!raw) { this.allMetrics = []; return }
+        const arr = JSON.parse(raw)
+        this.allMetrics = Array.isArray(arr) ? arr.filter((m: any) => m && typeof m.metricId === 'string') : []
+      } catch { this.allMetrics = [] }
+    },
     hiddenForOwner(owner?: string) {
       const key = owner || useAuthStore().ownerId || '__none__'
       const arr = this.hiddenByOwner[key] || []
@@ -108,28 +117,45 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
       this.allMetrics = result.filter(m => !hidden.has(m.metricId)).sort((a,b)=>a.name.localeCompare(b.name))
       this.saveAllMetrics()
     },
-    async hydrateAllMetrics() {
+    async hydrateAllMetrics(force?: boolean) {
       const auth = useAuthStore()
-      if (!auth.ownerId) return
+      if (!auth.session) return
+      // Reset guard if owner switched
+      if (this._lastMetricsOwnerId !== auth.ownerId) {
+        this.metricsInitialized = false
+        this._lastMetricsOwnerId = auth.ownerId
+        // Clear per-user caches and load that user's snapshot
+        this.metricsByName = new Map<string, Metric[]>()
+        this.allMetrics = []
+        this.selectedMetricId = null
+        this.loadAllMetricsFromStorage()
+      }
+      if (this.metricsInitialized && !force) return
       try {
-        const list = await QuickCheckInsAPI.listMetricsForOwner({ owner: auth.ownerId })
-        // Merge with any existing to preserve potential client-side info
-        const merged = [...this.allMetrics]
-        for (const m of list) {
-          const idx = merged.findIndex(x => x.metricId === m.metricId)
-          if (idx >= 0) merged[idx] = { ...merged[idx], ...m }
-          else merged.push(m)
-        }
-        const hidden = this.hiddenForOwner(auth.ownerId)
-        this.allMetrics = merged.filter(m => !hidden.has(m.metricId)).sort((a,b)=>a.name.localeCompare(b.name))
+        const list = await QuickCheckInsAPI.listMetricsForOwner({ owner: auth.ownerId || '' })
+        const hidden = this.hiddenForOwner(auth.ownerId || undefined)
+        this.allMetrics = (list || []).filter(m => !hidden.has(m.metricId)).sort((a,b)=>a.name.localeCompare(b.name))
         this.saveAllMetrics()
+        this.metricsInitialized = true
       } catch {}
+    },
+    resetForOwnerChange() {
+      // Clear in-memory caches when the active user changes
+      this.metricsByName = new Map<string, Metric[]>()
+      this.allMetrics = []
+      this.selectedMetricId = null
+      this.metricsInitialized = false
+      this._lastMetricsOwnerId = useAuthStore().ownerId
+      this.loadAllMetricsFromStorage()
     },
     saveOverrides() {
       try { localStorage.setItem('qc_timeOverrides', JSON.stringify(this.timeOverrides)) } catch {}
     },
     saveAllMetrics() {
-      try { localStorage.setItem('qc_allMetrics', JSON.stringify(this.allMetrics)) } catch {}
+      try {
+        const key = this.storageKeyFor()
+        localStorage.setItem(key, JSON.stringify(this.allMetrics))
+      } catch {}
     },
     normalizeCheckInTime(obj: any): number | undefined {
       if (!obj) return undefined
@@ -155,9 +181,11 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
         this.loading = false
       }
     },
-  async listCheckIns(params?: { metricName?: string; metricId?: string; startDate?: number; endDate?: number }) {
+  async listCheckIns(params?: { metricName?: string; metricId?: string; startDate?: number; endDate?: number; force?: boolean }) {
       const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+      if (!auth.session) throw new Error('session not set')
+      // Only refresh when explicitly forced or not yet initialized.
+      if (this.initialized && !params?.force) return
       this.loading = true
       this.error = null
       try {
@@ -184,8 +212,12 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
             metricId = undefined
           }
         }
-  const listRaw = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId, metricId: metricId, startDate: params?.startDate, endDate: params?.endDate })
-  const list = metricId ? (listRaw || []).filter((ci: any) => (ci.metric === metricId) || (ci.metricId === metricId)) : (listRaw || [])
+  const listRaw = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId || '', metricId: metricId, startDate: params?.startDate, endDate: params?.endDate })
+  // Defensive: drop null/undefined and non-object elements to avoid runtime errors like "null is not an object (evaluating 'ci.metric')"
+  const cleaned = Array.isArray(listRaw) ? listRaw.filter((x: any) => x && typeof x === 'object') : []
+  const list = metricId
+        ? cleaned.filter((ci: any) => (ci && (ci.metric === metricId || ci.metricId === metricId)))
+        : cleaned
         // Normalize timestamps and names if present
         // Build metricId -> {name, unit} map from cache and server
         const metaMap = new Map<string, { name?: string; unit?: string }>()
@@ -193,13 +225,7 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
           for (const m of arr) if (m.metricId) metaMap.set(m.metricId, { name: m.name, unit: m.unit })
         }
         for (const m of this.allMetrics) if (m.metricId) metaMap.set(m.metricId, { name: m.name, unit: m.unit })
-        // Hydrate from server to ensure units are available
-        try {
-          const all = await QuickCheckInsAPI.listMetricsForOwner({ owner: auth.ownerId })
-          // merge, prefer existing units when incoming lacks unit
-          this.mergeAllMetrics(all)
-          for (const m of this.allMetrics) metaMap.set(m.metricId, { name: m.name, unit: m.unit })
-        } catch {}
+        // Do not call listMetricsForOwner here; rely on initial hydration and metric mutations
     // Fallback: if we have a selectedMetricId but no meta, try loading by the current cache keys
     if (this.selectedMetricId && !metaMap.get(this.selectedMetricId)) {
           // Attempt to hydrate by known names in cache
@@ -210,7 +236,7 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
             }
           } catch {}
         }
-        const norm = (list || []).map((ci: any) => {
+  const norm = (list || []).filter(Boolean).map((ci: any) => {
           let ts = this.normalizeCheckInTime(ci)
           const id = ci.checkInId || ci._id || ci.id
           // Apply pending/overrides for stability
@@ -248,17 +274,18 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
         this.error = e?.message ?? 'Failed to load check-ins'
       } finally {
         this.loading = false
+        this.initialized = true
       }
     },
   async defineMetric(name: string) {
       this.loading = true
       this.error = null
       try {
-    const { metricId } = await QuickCheckInsAPI.defineMetric({ name })
+  const { metricId } = await QuickCheckInsAPI.defineMetric({ name })
     // Merge newly created metric and dedupe
     this.mergeAllMetrics({ metricId, name })
-  // Optionally refresh from server to pick up any server-side normalization
-  try { await this.hydrateAllMetrics() } catch {}
+  // Refresh metrics from server only on create
+  try { this.metricsInitialized = false; await this.hydrateAllMetrics(true) } catch {}
         this.selectedMetricId = metricId
         return metricId
       } catch (e: any) {
@@ -289,13 +316,13 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
       } finally { this.loading = false }
     },
     async deleteMetric(metricId: string) {
-      const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+  const auth = useAuthStore()
+  if (!auth.session) throw new Error('session not set')
       this.loading = true
       this.error = null
       try {
         try {
-          const resp: any = await QuickCheckInsAPI.deleteMetric({ metricId, owner: auth.ownerId })
+          const resp: any = await QuickCheckInsAPI.deleteMetric({ metricId, owner: auth.ownerId || '' })
           if (resp && typeof resp === 'object' && typeof resp.error === 'string' && resp.error) {
             throw new Error(resp.error)
           }
@@ -307,16 +334,16 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
           if (this.selectedMetricId === metricId) this.selectedMetricId = null
           this.checkIns = this.checkIns.map(ci => ci.metric === metricId ? { ...ci, metricName: undefined } : ci)
           this.saveAllMetrics()
-          // Re-hydrate from server to keep parity
-          try { await this.hydrateAllMetrics() } catch {}
+          // Re-hydrate from server only on delete
+          try { this.metricsInitialized = false; await this.hydrateAllMetrics(true) } catch {}
           return true
         } catch (apiErr: any) {
           // If API deletion fails, allow per-owner hide when user has zero check-ins for that metric
           try {
-            const list = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId, metricId })
+            const list = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId || '', metricId })
             const hasAny = Array.isArray(list) && list.length > 0
             if (!hasAny) {
-              this.hideMetricForOwner(metricId, auth.ownerId)
+              this.hideMetricForOwner(metricId, auth.ownerId || undefined)
               return true
             }
           } catch {}
@@ -329,9 +356,9 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
         this.loading = false
       }
     },
-    async record(metricName: string, value: number, timestamp?: number) {
-      const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+  async record(metricName: string, value: number, timestamp?: number) {
+  const auth = useAuthStore()
+  if (!auth.session) throw new Error('session not set')
       this.loading = true
       this.error = null
       try {
@@ -349,10 +376,10 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
         }
         if (!metricId) throw new Error('Metric not found; define it first')
         const atIso = timestamp ? new Date(timestamp).toISOString() : new Date().toISOString()
-        const { checkInId } = await QuickCheckInsAPI.record({ owner: auth.ownerId, metric: metricId, value, at: atIso })
+  const { checkInId } = await QuickCheckInsAPI.record({ owner: auth.ownerId || '', metric: metricId, value, at: atIso })
         this.selectedMetricId = metricId
-        // Refresh list filtered by this metric id
-        await this.listCheckIns({ metricId })
+  // Force refresh list filtered by this metric id
+  await this.listCheckIns({ metricId, force: true })
         return checkInId
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to record check-in'
@@ -362,8 +389,8 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
       }
   },
     async edit(checkInId: string, newValue: number, newTimestamp?: number, newMetricName?: string) {
-      const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+  const auth = useAuthStore()
+  if (!auth.session) throw new Error('session not set')
       this.loading = true
       this.error = null
       try {
@@ -373,7 +400,7 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
           const currentMetricId = ci?.metric
           if (currentMetricId) {
             try {
-              await QuickCheckInsAPI.renameMetric({ metricId: currentMetricId, name: newMetricName.trim(), owner: auth.ownerId })
+              await QuickCheckInsAPI.renameMetric({ metricId: currentMetricId, name: newMetricName.trim(), owner: auth.ownerId || '' })
               // Update caches and visible list
               this.allMetrics = this.allMetrics.map(m => m.metricId === currentMetricId ? { ...m, name: newMetricName.trim() } : m).sort((a,b)=>a.name.localeCompare(b.name))
               for (const [key, arr] of this.metricsByName.entries()) {
@@ -402,9 +429,9 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
           this.checkIns[idx] = { ...ci, value: newValue, timestamp: ts, at: ts ? new Date(ts).toISOString() : ci.at, ...(newMetricName ? { metricName: newMetricName.trim() } : {}) }
           this.checkIns = [...this.checkIns].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
         }
-        await QuickCheckInsAPI.edit({ owner: auth.ownerId, checkInId, newValue, newTimestamp })
-        // Final refresh will keep overrides applied to avoid snap-back
-        await this.listCheckIns({ metricId: this.selectedMetricId || undefined })
+  await QuickCheckInsAPI.edit({ owner: auth.ownerId || '', checkInId, newValue, newTimestamp })
+  // Final refresh; force to include any server-side changes
+  await this.listCheckIns({ metricId: this.selectedMetricId || undefined, force: true })
   return true
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to edit check-in'
@@ -414,16 +441,16 @@ export const useQuickCheckInsStore = defineStore('quickCheckIns', {
       }
     },
     async deleteCheckIn(checkInId: string) {
-      const auth = useAuthStore()
-      if (!auth.ownerId) throw new Error('ownerId not set')
+  const auth = useAuthStore()
+  if (!auth.session) throw new Error('session not set')
       this.loading = true
       this.error = null
       try {
         // Optimistically remove
         this.checkIns = this.checkIns.filter(ci => ci.checkInId !== checkInId)
-        await QuickCheckInsAPI.deleteCheckIn({ owner: auth.ownerId, checkIn: checkInId })
-        // Refresh current view
-        await this.listCheckIns({ metricId: this.selectedMetricId || undefined })
+  await QuickCheckInsAPI.deleteCheckIn({ owner: auth.ownerId || '', checkIn: checkInId })
+  // Force refresh current view
+  await this.listCheckIns({ metricId: this.selectedMetricId || undefined, force: true })
         return true
       } catch (e: any) {
         this.error = e?.message ?? 'Failed to delete check-in'

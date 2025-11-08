@@ -2,15 +2,7 @@
   <section>
     <h2>Weekly Summary</h2>
 
-    <div class="auth-box">
-      <label>
-        User:
-        <input v-model.trim="owner" placeholder="e.g. alice" />
-      </label>
-      <button @click="saveOwner" :disabled="!owner">Use User</button>
-      <button @click="clearOwner" v-if="auth.ownerId">Clear</button>
-      <p v-if="auth.ownerId">Active User: <strong>{{ ownerLabel }}</strong></p>
-    </div>
+  <!-- User selection removed; page uses current session automatically -->
 
     <div class="range-bar">
       <div class="range-label">{{ rangeLabel }}</div>
@@ -63,12 +55,8 @@
       </div>
 
       <div class="card">
-        <h3>Insights</h3>
-  <div v-if="backendReport" class="report-box">{{ backendReport }}</div>
-        <ul class="bullets" v-if="aiInsights.length">
-          <li v-for="(line, i) in aiInsights" :key="i">{{ line }}</li>
-        </ul>
-        <ul class="bullets" v-else>
+  <h3>Insights</h3>
+  <ul class="bullets">
           <li v-if="mealsSummary.dominantType">Most meals were <strong>{{ mealsSummary.dominantType }}</strong>.</li>
           <li v-if="trendingUp.length">Trending up: <strong>{{ trendingUp.join(', ') }}</strong></li>
           <li v-if="trendingDown.length">Trending down: <strong>{{ trendingDown.join(', ') }}</strong></li>
@@ -84,28 +72,22 @@
 import { computed, onMounted, ref } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useMealLogStore, type MealItem, type MealSummary as MealRow } from '../stores/mealLog'
-import { QuickCheckInsAPI, InsightMiningAPI } from '../lib/api'
+import { QuickCheckInsAPI } from '../lib/api'
 import { useQuickCheckInsStore } from '../stores/quickCheckIns'
-import { mineWeeklyInsights } from '../lib/insightMining'
 
 const auth = useAuthStore()
 const ml = useMealLogStore()
 const quickStore = useQuickCheckInsStore()
-function stripOwner(id?: string | null) {
-  const s = (id || '').trim()
-  return s.startsWith('user:') ? s.slice(5) : s
-}
-const owner = ref(stripOwner(auth.ownerId))
-const ownerLabel = computed(() => stripOwner(auth.ownerId))
 
 const now = () => Date.now()
+// Ensure we fetch meals exactly once when this page is loaded
+const mealsRefreshedOnce = ref(false)
 const ONE_DAY = 24 * 60 * 60 * 1000
 const startOfDay = (ms: number) => { const d = new Date(ms); d.setHours(0,0,0,0); return d.getTime() }
 const endOfDay = (ms: number) => { const d = new Date(ms); d.setHours(23,59,59,999); return d.getTime() }
 const endMs = ref(endOfDay(now()))
 const startMs = ref(startOfDay(endMs.value - 6 * ONE_DAY)) // last 7 full days (local)
-const aiInsights = ref<string[]>([])
-const backendReport = ref<string>('')
+// Removed InsightMining + LLM; we only provide client-derived facts
 const diag = ref({ apiRangedCount: 0, apiAllCount: 0, clientInRangeCount: 0 })
 const loadError = ref<string | null>(null)
 
@@ -229,15 +211,18 @@ function isLikelyId(s?: string) {
 }
 
 async function loadAll() {
-  if (!auth.ownerId) return
+  if (!auth.session) return
   loadError.value = null
   diag.value = { apiRangedCount: 0, apiAllCount: 0, clientInRangeCount: 0 }
   const issues: string[] = []
   // Track metric loading errors across scopes
   let metricsError: string | null = null
-  // Meals: hydrate list and rely on client-side filter by date
+  // Meals: hydrate list once and rely on client-side filter by date
   try {
-    await ml.listForOwner()
+    if (!mealsRefreshedOnce.value) {
+      await ml.listForOwner(undefined, false)
+      mealsRefreshedOnce.value = true
+    }
   } catch (err: any) {
     const code = err?.response?.status
     // Treat 404 as no meals available for owner (not an error)
@@ -245,7 +230,7 @@ async function loadAll() {
       issues.push(err?.message ?? 'Unable to load meals')
     }
   }
-  if (auth.ownerId && quickStore.allMetrics.length === 0) {
+  if (auth.session && quickStore.allMetrics.length === 0) {
     try { await quickStore.hydrateAllMetrics() } catch {}
   }
   // Check-ins: fetch strictly within the selected time window using the API
@@ -280,7 +265,8 @@ async function loadAll() {
   try {
     let metrics: Array<{ metricId: string; name: string }> = []
     try {
-      metrics = await QuickCheckInsAPI.listMetricsForOwner({ owner: auth.ownerId })
+  if (!auth.session) return
+  metrics = await QuickCheckInsAPI.listMetricsForOwner({ owner: auth.ownerId || '' })
     } catch (err: any) {
       metrics = []
   const code = err?.response?.status
@@ -301,7 +287,7 @@ async function loadAll() {
     let listRaw: any[] = []
     let rangedError: string | null = null
     try {
-      const ranged = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId, startDate: startMs.value, endDate: endMs.value })
+  const ranged = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId || '', startDate: startMs.value, endDate: endMs.value })
       listRaw = Array.isArray(ranged) ? ranged : []
       diag.value.apiRangedCount = listRaw.length
     } catch (err: any) {
@@ -319,7 +305,7 @@ async function loadAll() {
     if (listRaw.length === 0) {
       let allError: string | null = null
       try {
-        const allRaw = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId })
+  const allRaw = await QuickCheckInsAPI.listByOwner({ owner: auth.ownerId || '' })
         const all = Array.isArray(allRaw) ? allRaw : []
         diag.value.apiAllCount = all.length
         listRaw = all.filter((r: any) => {
@@ -412,8 +398,7 @@ async function loadAll() {
       issues.push(metricsError)
     }
   // Build AI insights after data loads
-  try { await buildAIInsights() } catch {}
-  try { await buildBackendReport() } catch {}
+  // InsightMining & LLM removed: insights are purely client-side now
   if (issues.length) {
     const unique = issues.filter(Boolean).filter((msg, idx, arr) => arr.indexOf(msg) === idx)
     const friendly = unique.map((msg) => {
@@ -426,77 +411,15 @@ async function loadAll() {
   }
 }
 
-function useOwner() {
-  auth.setSession(owner.value)
-  loadAll()
-}
-// Keep compatibility with template's button handler
-const saveOwner = useOwner
-function clearOwner() {
-  auth.clear()
-  loadError.value = null
-  ciSamples.value = []
-  aiInsights.value = []
-  backendReport.value = ''
-  diag.value = { apiRangedCount: 0, apiAllCount: 0, clientInRangeCount: 0 }
-}
-
-onMounted(() => { if (auth.ownerId) loadAll() })
-// Build a compact weekly summary and ask the LLM for plain-language insights.
-async function buildAIInsights() {
-  if (!auth.ownerId) { aiInsights.value = []; return }
-  // Compose a concise, ID-free summary object
-  const week: any = {
-    window: {
-      start: new Date(startMs.value).toISOString(),
-      end: new Date(endMs.value).toISOString(),
-  widenedTo30Days: false
-    },
-    meals: {
-      total: mealsSummary.value.total,
-      byType: mealsSummary.value.byType,
-      topFoods: mealsSummary.value.topFoods.slice(0, 10)
-    },
-    checkIns: Array.from(ciSummary.value.entries()).map(([name, s]) => ({
-      name, avg: s.avg, min: s.min, max: s.max, count: s.count, delta: s.delta
-    }))
-  }
-  try {
-    aiInsights.value = await mineWeeklyInsights(auth.ownerId, week)
-  } catch {
-    aiInsights.value = []
-  }
-}
-
-// Compose a weekly observation and ask InsightMining backend to analyze + summarize
-async function buildBackendReport() {
-  backendReport.value = ''
-  if (!auth.ownerId) return
-  // Build a compact, human-readable weekly quick check-ins summary as one observation string
-  const parts: string[] = []
-  for (const [name, s] of ciSummary.value.entries()) {
-    const trend = s.delta ? `, ${s.delta > 0 ? 'up' : 'down'} ${fmt(Math.abs(s.delta))}` : ''
-    parts.push(`${name}: avg ${fmt(s.avg)} (min ${fmt(s.min)}, max ${fmt(s.max)}) over ${s.count} entries${trend}`)
-  }
-  const obs = parts.length
-    ? `Weekly quick check-ins from ${new Date(startMs.value).toISOString()} to ${new Date(endMs.value).toISOString()}: ` + parts.join('; ')
-    : `No quick check-ins between ${new Date(startMs.value).toISOString()} and ${new Date(endMs.value).toISOString()}.`
-  try {
-    // Ingest observation, analyze, then summarize
-    await InsightMiningAPI.ingest({ owner: auth.ownerId, observation: obs })
-    try { await InsightMiningAPI.analyze({ owner: auth.ownerId }) } catch {}
-    const { report } = await InsightMiningAPI.summarize({ owner: auth.ownerId })
-    if (typeof report === 'string' && report.trim()) {
-      backendReport.value = report.trim()
-      return
-    }
-    // Fallback to _getReport if summarize didn’t return inline
+onMounted(async () => {
+  if (auth.session) {
     try {
-      const r = await InsightMiningAPI.getReport({ owner: auth.ownerId })
-      if (r?.report) backendReport.value = r.report
+      await ml.listForOwner(undefined, true) // force one refresh when page is opened
+      mealsRefreshedOnce.value = true
     } catch {}
-  } catch {}
-}
+    await loadAll()
+  }
+})
 </script>
 
 <style scoped>

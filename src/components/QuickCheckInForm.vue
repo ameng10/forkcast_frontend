@@ -93,11 +93,12 @@ async function submit() {
     ts = timestamp.value
   }
   await store.record(metricName.value, value.value!, ts)
+  const emittedName = metricName.value
+  emit('recorded', { metricName: emittedName })
   metricName.value = ''
   value.value = null
   timestamp.value = null
   timestampLocal.value = ''
-  emit('recorded', { metricName: metricName.value })
 }
 function setNow() {
   const d = new Date()
